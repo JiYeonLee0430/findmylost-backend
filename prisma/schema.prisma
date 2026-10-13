@@ -1,0 +1,126 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+enum Role {
+  USER
+  ORG_ADMIN
+  SUPER_ADMIN // 서비스 운영자: 기관 인증 신청 승인용
+}
+
+enum ItemType {
+  LOST  // 분실물
+  FOUND // 습득물
+}
+
+enum ItemStatus {
+  OPEN
+  RETURNED
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Institution {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  domain    String?  @unique
+  createdAt DateTime @default(now())
+
+  users                User[]
+  items                Item[]
+  verificationRequests OrgVerificationRequest[]
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String?
+  name      String
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+
+  // MFA (TOTP)
+  mfaEnabled   Boolean   @default(false)
+  mfaSecret    String? // AES-256-GCM 암호화된 값 저장
+  mfaEnabledAt DateTime?
+
+  // 기관 승인 후에만 채워짐
+  institutionId Int?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+
+  items                Item[]
+  verificationRequests OrgVerificationRequest[] @relation("RequestApplicant") // 내가 낸 신청
+  reviewedRequests     OrgVerificationRequest[] @relation("AdminReviews")     // 내가 심사한 신청
+}
+
+// 기관 인증 신청 (승인되면 User.role = ORG_ADMIN, institutionId 세팅)
+model OrgVerificationRequest {
+  id Int @id @default(autoincrement())
+
+  userId Int
+  user   User @relation("RequestApplicant", fields: [userId], references: [id])
+
+  institutionId Int
+  institution   Institution @relation(fields: [institutionId], references: [id])
+
+  evidence String? // 재직 증빙 설명/파일 키 등
+  status   VerificationStatus @default(PENDING)
+
+  reviewedById Int?
+  reviewedBy   User? @relation("AdminReviews", fields: [reviewedById], references: [id])
+
+  createdAt  DateTime  @default(now())
+  reviewedAt DateTime?
+
+  @@index([status])
+}
+
+model Item {
+  id       Int        @id @default(autoincrement())
+  title    String
+  type     ItemType
+  category String
+  status   ItemStatus @default(OPEN)
+
+  locationLat     Float
+  locationLng     Float
+  storageLocation String? // 기관이 올린 습득물의 보관 장소
+
+  // Lambda가 POST /internal/items/:id/embedding 으로 채움
+  imageVector Unsupported("vector(1024)")?
+
+  createdAt DateTime @default(now())
+
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id])
+
+  institutionId Int?         @map("org_id")
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+
+  images ItemImage[]
+
+  @@index([institutionId])
+  @@index([type, status])
+}
+
+model ItemImage {
+  id        Int      @id @default(autoincrement())
+  itemId    Int
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  s3Key     String // items/{itemId}/{파일명}  (전체 URL이 아니라 key만 저장)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([itemId])
+}

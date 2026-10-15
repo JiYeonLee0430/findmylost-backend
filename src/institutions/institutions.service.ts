@@ -1,0 +1,61 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Role, VerificationStatus } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuthUser } from '../common/current-user.decorator';
+
+@Injectable()
+export class InstitutionsService {
+  constructor(private prisma: PrismaService) {}
+
+  async requestVerification(user: AuthUser, institutionId: number, evidence?: string) {
+    if (user.role !== Role.USER) throw new ConflictException('이미 기관 권한이 있습니다.');
+    if (!user.mfaEnabled) throw new ForbiddenException('기관 인증 신청 전에 MFA를 먼저 등록해주세요.');
+
+    const inst = await this.prisma.institution.findUnique({ where: { id: institutionId } });
+    if (!inst) throw new NotFoundException('기관을 찾을 수 없습니다.');
+
+    const pending = await this.prisma.orgVerificationRequest.findFirst({
+      where: { userId: user.id, status: VerificationStatus.PENDING },
+    });
+    if (pending) throw new ConflictException('이미 심사 중인 신청이 있습니다.');
+
+    return this.prisma.orgVerificationRequest.create({
+      data: { userId: user.id, institutionId, evidence },
+    });
+  }
+
+  listPending() {
+    return this.prisma.orgVerificationRequest.findMany({
+      where: { status: VerificationStatus.PENDING },
+      include: { user: { select: { id: true, email: true, name: true } }, institution: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async approve(requestId: number, reviewerId: number) {
+    const req = await this.prisma.orgVerificationRequest.findUnique({ where: { id: requestId } });
+    if (!req || req.status !== VerificationStatus.PENDING) throw new BadRequestException('처리할 수 없는 신청입니다.');
+
+    await this.prisma.$transaction([
+      this.prisma.orgVerificationRequest.update({
+        where: { id: requestId },
+        data: { status: VerificationStatus.APPROVED, reviewedById: reviewerId, reviewedAt: new Date() },
+      }),
+      this.prisma.user.update({
+        where: { id: req.userId },
+        data: { role: Role.ORG_ADMIN, institutionId: req.institutionId },
+      }),
+    ]);
+    return { ok: true };
+  }
+
+  async reject(requestId: number, reviewerId: number) {
+    const req = await this.prisma.orgVerificationRequest.findUnique({ where: { id: requestId } });
+    if (!req || req.status !== VerificationStatus.PENDING) throw new BadRequestException('처리할 수 없는 신청입니다.');
+    await this.prisma.orgVerificationRequest.update({
+      where: { id: requestId },
+      data: { status: VerificationStatus.REJECTED, reviewedById: reviewerId, reviewedAt: new Date() },
+    });
+    return { ok: true };
+  }
+}

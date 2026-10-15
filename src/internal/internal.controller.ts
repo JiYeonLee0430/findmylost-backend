@@ -1,24 +1,47 @@
-import { Controller, Post, Body, Param, UseGuards } from '@nestjs/common';
-import { LambdaGuard } from '../common/lambda.guard';
+import {
+  BadRequestException, Body, Controller, HttpCode, NotFoundException,
+  Param, ParseIntPipe, Post, UseGuards,
+} from '@nestjs/common';
+import { ApiExcludeController } from '@nestjs/swagger';
+import {
+  ArrayMaxSize, ArrayMinSize, IsArray, IsNumber, IsOptional, IsString, MaxLength,
+} from 'class-validator';
+import { InternalApiKeyGuard } from '../common/internal-api-key.guard';
+import { PrismaService } from '../prisma/prisma.service';
 
-@Controller('internal')
+const EMBEDDING_DIM = 1024;
+
+class EmbeddingDto {
+  @IsArray()
+  @ArrayMinSize(EMBEDDING_DIM)
+  @ArrayMaxSize(EMBEDDING_DIM)
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { each: true })
+  embedding: number[];
+
+  @IsOptional() @IsString() @MaxLength(512)
+  s3Key?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  model?: string;
+}
+
+@ApiExcludeController()
+@UseGuards(InternalApiKeyGuard)
+@Controller('internal/items')
 export class InternalController {
-  
-  // 요청한 주소: POST /internal/items/{id}/embedding
-  @Post('items/:id/embedding')
-  @UseGuards(LambdaGuard) // 시크릿 키 검사 미들웨어 통과 필수
-  async updateEmbedding(
-    @Param('id') id: string, 
-    @Body() body: { embedding: number[] }
-  ) {
-    const itemId = parseInt(id, 10);
-    
-    // TODO: 나중에 Prisma 연동해서 pgvector DB에 저장하는 로직 들어갈 자리
-    console.log(`Lambda로부터 아이템 ${itemId}의 임베딩(벡터) 데이터를 수신했습니다.`);
-    
-    return { 
-      success: true, 
-      message: `아이템 ${itemId}의 임베딩 데이터가 안전하게 수신되었습니다.` 
-    };
+  constructor(private prisma: PrismaService) {}
+
+  @Post(':id/embedding')
+  @HttpCode(200)
+  async saveEmbedding(@Param('id', ParseIntPipe) id: number, @Body() dto: EmbeddingDto) {
+    if (dto.s3Key && !dto.s3Key.startsWith(`items/${id}/`)) {
+      throw new BadRequestException('s3Key가 게시글 ID와 맞지 않습니다.');
+    }
+    const vec = `[${dto.embedding.join(',')}]`;
+    const updated = await this.prisma.$executeRaw`
+      UPDATE "Item" SET "imageVector" = ${vec}::vector WHERE id = ${id}
+    `;
+    if (updated === 0) throw new NotFoundException('게시글을 찾을 수 없습니다.');
+    return { ok: true };
   }
 }

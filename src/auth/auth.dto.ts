@@ -26,3 +26,16 @@ export class LoginDto {
   @IsString()
   password: string;
 }
+
+export class SendVerificationDto {
+  @ApiProperty({ example: 'user@test.com' })
+  @IsEmail()
+  email: string;
+}
+
+export class VerifyEmailDto {
+  @ApiProperty({ description: '메일 링크의 token 값' })
+  @IsString()
+  @MinLength(32)
+  token: string;
+}

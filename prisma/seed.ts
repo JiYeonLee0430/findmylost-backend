@@ -48,7 +48,7 @@ async function main() {
   for (const a of orgAdmins) {
     await prisma.user.upsert({
       where: { email: a.email },
-      update: { ...mfaFields }, // 이미 있는 계정도 MFA 상태 갱신
+      update: { ...mfaFields, emailVerifiedAt: new Date(), }, // 이미 있는 계정도 MFA 상태 갱신
       create: { ...a, password: passwordHash, role: Role.ORG_ADMIN, ...mfaFields },
     });
   }
@@ -56,7 +56,7 @@ async function main() {
   // 3. 서비스 운영자 (기관 인증 신청 승인용)
   await prisma.user.upsert({
     where: { email: 'superadmin@lostfound.com' },
-    update: { ...mfaFields },
+    update: { ...mfaFields, emailVerifiedAt: new Date(), },
     create: {
       email: 'superadmin@lostfound.com',
       password: passwordHash,
@@ -69,7 +69,7 @@ async function main() {
   // 4. 일반 사용자 (기관 인증 신청 시연용, MFA는 일부러 꺼둠)
   await prisma.user.upsert({
     where: { email: 'user@test.com' },
-    update: {},
+    update: {emailVerifiedAt: new Date(),},
     create: {
       email: 'user@test.com',
       password: passwordHash,

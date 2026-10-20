@@ -1,0 +1,87 @@
+# 저장소 위치: .github/workflows/deploy.yml
+# main 브랜치에 push되면 빌드 -> zip -> Elastic Beanstalk 배포를 자동으로 한다.
+# 배포 전용 IAM 사용자(refind-github-deploy)의 키를 GitHub Secrets에서 꺼내 쓴다.
+# 필요한 Secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# (무료 플랜 계정은 SCP로 OIDC가 막혀 있어서 키 방식을 사용)
+
+name: Deploy backend to Elastic Beanstalk
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Actions 탭에서 수동 실행도 가능
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend # 배포가 겹치지 않게 한 번에 하나만
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  EB_APP: refind
+  EB_ENV: refind-backend
+  EB_BUCKET: elasticbeanstalk-ap-southeast-2-528730633269
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 받기
+        uses: actions/checkout@v4
+
+      - name: Node.js 24 준비
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 설치 (postinstall로 prisma generate 포함)
+        run: npm ci
+
+      - name: 빌드
+        run: npm run build
+
+      - name: 배포용 zip 만들기
+        run: |
+          mkdir -p deploy
+          cp -r dist prisma package.json package-lock.json deploy/
+          echo "web: node dist/main.js" > deploy/Procfile
+          cd deploy && zip -qr ../app.zip .
+          echo "VERSION=gh-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: AWS 배포 키 설정 (GitHub Secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: S3에 올리고 새 버전 등록
+        run: |
+          aws s3 cp app.zip "s3://$EB_BUCKET/$EB_APP/$VERSION.zip"
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APP" \
+            --version-label "$VERSION" \
+            --source-bundle "S3Bucket=$EB_BUCKET,S3Key=$EB_APP/$VERSION.zip" \
+            --description "commit $GITHUB_SHA"
+
+      - name: Beanstalk 배포
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EB_ENV" \
+            --version-label "$VERSION"
+          aws elasticbeanstalk wait environment-updated \
+            --environment-names "$EB_ENV"
+
+      - name: 배포 결과 확인
+        run: |
+          read STATUS HEALTH DEPLOYED <<< "$(aws elasticbeanstalk describe-environments \
+            --environment-names "$EB_ENV" \
+            --query 'Environments[0].[Status,Health,VersionLabel]' --output text)"
+          echo "상태: $STATUS / 건강: $HEALTH / 배포된 버전: $DEPLOYED"
+          if [ "$DEPLOYED" != "$VERSION" ] || [ "$HEALTH" = "Red" ]; then
+            echo "배포 실패: 새 버전이 적용되지 않았거나 서버 상태가 Red예요. Beanstalk 이벤트 탭을 확인하세요."
+            exit 1
+          fi

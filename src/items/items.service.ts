@@ -1,8 +1,9 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ItemStatus, ItemType, Role } from '@prisma/client';
+import { ItemStatus, ItemType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { S3Service } from './s3.service';
+import { ListItemsQueryDto } from './items-query.dto';
 
 export interface CreateItemInput {
   title: string;
@@ -29,6 +30,84 @@ export class ItemsService {
         institutionId: isOrg ? user.institutionId : null,
       },
     });
+  }
+
+  /** 목록 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */
+  async list(user: AuthUser | null, q: ListItemsQueryDto) {
+    const page = q.page ?? 1;
+    const limit = q.limit ?? 20;
+
+    const where: Prisma.ItemWhereInput = {
+      status: q.status ?? ItemStatus.OPEN,
+      ...(q.type && { type: q.type }),
+      ...(q.category && { category: q.category }),
+      ...(q.institutionId && { institutionId: q.institutionId }),
+      ...(q.keyword && { title: { contains: q.keyword, mode: 'insensitive' } }),
+    };
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.item.count({ where }),
+      this.prisma.item.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          category: true,
+          status: true,
+          locationLat: true,
+          locationLng: true,
+          storageLocation: true,
+          createdAt: true,
+          institution: { select: { id: true, name: true } },
+          images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
+        },
+      }),
+    ]);
+
+    const items = await Promise.all(
+      rows.map(async ({ images, ...item }) => ({
+        ...item,
+        storageLocation: user ? item.storageLocation : null, // 비로그인은 가림
+        thumbnailUrl: images[0] ? await this.s3.createDownloadUrl(images[0].s3Key) : null,
+      })),
+    );
+    return { items, total, page, limit };
+  }
+
+  /** 상세 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */
+  async detail(user: AuthUser | null, itemId: number) {
+    const item = await this.prisma.item.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        category: true,
+        status: true,
+        locationLat: true,
+        locationLng: true,
+        storageLocation: true,
+        createdAt: true,
+        authorId: true,
+        author: { select: { name: true } },
+        institution: { select: { id: true, name: true } },
+        images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: { id: true, s3Key: true } },
+      },
+    });
+    if (!item) throw new NotFoundException('게시글을 찾을 수 없습니다.');
+
+    const { images, authorId, ...rest } = item;
+    const imageUrls = await Promise.all(images.map((i) => this.s3.createDownloadUrl(i.s3Key)));
+    return {
+      ...rest,
+      storageLocation: user ? rest.storageLocation : null, // 비로그인은 가림
+      isMine: user ? authorId === user.id : false,
+      imageUrls: imageUrls.filter((u): u is string => !!u),
+    };
   }
 
   private async assertCanManage(user: AuthUser, itemId: number) {

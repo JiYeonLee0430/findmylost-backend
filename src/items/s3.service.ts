@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DeleteObjectsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
 
@@ -18,9 +18,24 @@ export class S3Service {
     const url = await getSignedUrl(
       this.s3,
       new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType }),
-      { expiresIn: 300 },
+      { expiresIn: 300 }, // 업로드용은 5분 유효
     );
     return { key, uploadUrl: url };
+  }
+
+  /** 비공개 버킷의 사진을 볼 수 있는 임시 URL (1시간) */
+  async createDownloadUrl(key: string): Promise<string | null> {
+    try {
+      return await getSignedUrl(
+        this.s3,
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+        { expiresIn: 3600 },
+      );
+    } catch (e) {
+      // AWS 자격 증명이 없는 로컬에서도 목록 조회는 동작하게 함
+      console.error('다운로드 URL 생성 실패', e);
+      return null;
+    }
   }
 
   async deleteObjects(keys: string[]) {

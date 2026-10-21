@@ -14,6 +14,14 @@ export interface CreateItemInput {
   storageLocation?: string;
 }
 
+export interface UpdateItemInput {
+  title?: string;
+  category?: string;
+  locationLat?: number;
+  locationLng?: number;
+  storageLocation?: string | null;
+}
+
 @Injectable()
 export class ItemsService {
   constructor(private prisma: PrismaService, private s3: S3Service) {}
@@ -118,6 +126,45 @@ export class ItemsService {
       user.role === Role.ORG_ADMIN && item.institutionId !== null && item.institutionId === user.institutionId;
     if (!isAuthor && !isSameOrgAdmin) throw new ForbiddenException('권한이 없습니다.');
     return item;
+  }
+
+  async update(user: AuthUser, itemId: number, input: UpdateItemInput) {
+    const item = await this.assertCanManage(user, itemId);
+
+    if (Object.values(input).every((v) => v === undefined)) {
+      throw new BadRequestException('수정할 항목을 보내주세요.');
+    }
+
+    // 보관 장소는 기관 계정이 올린 습득물에서만 입력 가능 (null로 지우는 건 항상 허용)
+    if (input.storageLocation) {
+      const canSetStorage =
+        user.role === Role.ORG_ADMIN && item.type === ItemType.FOUND && item.institutionId !== null;
+      if (!canSetStorage) {
+        throw new ForbiddenException('보관 장소는 기관 계정의 습득물에만 입력할 수 있습니다.');
+      }
+    }
+
+    return this.prisma.item.update({
+      where: { id: itemId },
+      data: {
+        title: input.title,
+        category: input.category,
+        locationLat: input.locationLat,
+        locationLng: input.locationLng,
+        storageLocation: input.storageLocation,
+      },
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        category: true,
+        status: true,
+        locationLat: true,
+        locationLng: true,
+        storageLocation: true,
+        createdAt: true,
+      },
+    });
   }
 
   async updateStatus(user: AuthUser, itemId: number, status: ItemStatus) {

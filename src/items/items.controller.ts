@@ -1,8 +1,8 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { ItemStatus, ItemType } from '@prisma/client';
-import { IsEnum, IsLatitude, IsLongitude, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsLatitude, IsLongitude, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { AuthUser } from '../common/current-user.decorator';
 import { OptionalJwtAuthGuard } from '../common/optional-jwt.guard';
@@ -29,6 +29,28 @@ class StatusDto {
   @IsEnum(ItemStatus) status: ItemStatus;
 }
 
+class UpdateItemDto {
+  @ApiPropertyOptional({ example: '검정 지갑' })
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(100)
+  title?: string;
+
+  @ApiPropertyOptional({ example: '지갑' })
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(50)
+  category?: string;
+
+  @ApiPropertyOptional({ example: 36.8 })
+  @IsOptional() @IsLatitude()
+  locationLat?: number;
+
+  @ApiPropertyOptional({ example: 127.1 })
+  @IsOptional() @IsLongitude()
+  locationLng?: number;
+
+  @ApiPropertyOptional({ example: '학생회관 1층', nullable: true, description: 'null이면 삭제' })
+  @IsOptional() @IsString() @MaxLength(200)
+  storageLocation?: string | null;
+}
+
 @ApiTags('Items (게시글)')
 @ApiBearerAuth()
 @Controller('items')
@@ -53,6 +75,12 @@ export class ItemsController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateItemDto) {
     return this.items.create(user, dto);
+  }
+
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Patch(':id')
+  update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateItemDto) {
+    return this.items.update(user, id, dto);
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)

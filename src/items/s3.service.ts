@@ -29,7 +29,7 @@ export class S3Service {
       return await getSignedUrl(
         this.s3,
         new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-        { expiresIn: 3600 },
+        { expiresIn: 1800 },
       );
     } catch (e) {
       // AWS 자격 증명이 없는 로컬에서도 목록 조회는 동작하게 함

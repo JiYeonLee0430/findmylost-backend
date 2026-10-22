@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { S3Service } from './s3.service';
 import { ListItemsQueryDto } from './items-query.dto';
+import { MapItemsQueryDto } from './items-map-query.dto';
 
 export interface CreateItemInput {
   title: string;
@@ -85,6 +86,81 @@ export class ItemsService {
     );
     return { items, total, page, limit };
   }
+
+    /** 지도용 조회: 영역(minLat~maxLng) 또는 반경(lat, lng, radiusKm)으로 가벼운 마커 정보만 */
+    async mapItems(user: AuthUser | null, q: MapItemsQueryDto) {
+      const hasBox = [q.minLat, q.maxLat, q.minLng, q.maxLng].every((v) => v !== undefined);
+      const hasCircle = q.lat !== undefined && q.lng !== undefined;
+  
+      if (!hasBox && !hasCircle) {
+        throw new BadRequestException('영역(minLat, maxLat, minLng, maxLng) 또는 중심(lat, lng)을 보내주세요.');
+      }
+  
+      let latMin: number, latMax: number, lngMin: number, lngMax: number;
+      if (hasBox) {
+        if (q.minLat! > q.maxLat! || q.minLng! > q.maxLng!) {
+          throw new BadRequestException('영역의 최솟값은 최댓값보다 클 수 없습니다.');
+        }
+        [latMin, latMax, lngMin, lngMax] = [q.minLat!, q.maxLat!, q.minLng!, q.maxLng!];
+      } else {
+        // 반경을 사각 영역으로 먼저 줄이고, 아래에서 실제 거리로 다시 걸러냄
+        const radius = q.radiusKm ?? 3;
+        const dLat = radius / 111;
+        const dLng = radius / (111 * Math.max(Math.cos((q.lat! * Math.PI) / 180), 0.01));
+        [latMin, latMax, lngMin, lngMax] = [q.lat! - dLat, q.lat! + dLat, q.lng! - dLng, q.lng! + dLng];
+      }
+  
+      const rows = await this.prisma.item.findMany({
+        where: {
+          status: q.status ?? ItemStatus.OPEN,
+          locationLat: { gte: latMin, lte: latMax },
+          locationLng: { gte: lngMin, lte: lngMax },
+          ...(q.type && { type: q.type }),
+          ...(q.category && { category: q.category }),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          category: true,
+          status: true,
+          locationLat: true,
+          locationLng: true,
+          storageLocation: true,
+          createdAt: true,
+          institution: { select: { id: true, name: true } },
+        },
+      });
+  
+      // 반경 조회면 실제 거리를 계산해서 원 밖은 제거하고 가까운 순으로 정렬
+      const withDistance = rows.map((r) => ({
+        ...r,
+        storageLocation: user ? r.storageLocation : null, // 비로그인은 가림
+        distanceKm: hasCircle && !hasBox ? this.distanceKm(q.lat!, q.lng!, r.locationLat, r.locationLng) : null,
+      }));
+  
+      if (hasCircle && !hasBox) {
+        const radius = q.radiusKm ?? 3;
+        const items = withDistance
+          .filter((r) => r.distanceKm! <= radius)
+          .sort((a, b) => a.distanceKm! - b.distanceKm!)
+          .map((r) => ({ ...r, distanceKm: Math.round(r.distanceKm! * 100) / 100 }));
+        return { items, count: items.length };
+      }
+      return { items: withDistance, count: withDistance.length };
+    }
+  
+    /** 두 좌표 사이의 거리(km), 하버사인 공식 */
+    private distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 6371 * 2 * Math.asin(Math.sqrt(a));
+    }
 
   /** 상세 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */
   async detail(user: AuthUser | null, itemId: number) {

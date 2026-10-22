@@ -5,6 +5,7 @@ import type { AuthUser } from '../common/current-user.decorator';
 import { S3Service } from './s3.service';
 import { ListItemsQueryDto } from './items-query.dto';
 import { MapItemsQueryDto } from './items-map-query.dto';
+import { SimilarItemsQueryDto } from './items-similar-query.dto';
 
 export interface CreateItemInput {
   title: string;
@@ -160,6 +161,76 @@ export class ItemsService {
       const a =
         Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
       return 6371 * 2 * Math.asin(Math.sqrt(a));
+    }
+  
+    /** 비슷한 게시글 찾기: 저장된 임베딩 벡터의 코사인 거리로 비교 */
+    async similar(user: AuthUser | null, itemId: number, q: SimilarItemsQueryDto) {
+      const limit = q.limit ?? 10;
+  
+      // imageVector는 Prisma가 직접 못 읽는 타입이라 raw 쿼리로 확인
+      const src = await this.prisma.$queryRaw<{ type: ItemType; ready: boolean }[]>`
+        SELECT type, ("imageVector" IS NOT NULL) AS ready FROM "Item" WHERE id = ${itemId}
+      `;
+      if (src.length === 0) throw new NotFoundException('게시글을 찾을 수 없습니다.');
+      if (!src[0].ready) return { ready: false, items: [] }; // 사진 분석이 아직 안 끝남
+  
+      const targetType = src[0].type === ItemType.LOST ? ItemType.FOUND : ItemType.LOST;
+      const typeFilter =
+        (q.scope ?? 'opposite') === 'opposite'
+          ? Prisma.sql`AND t.type = ${targetType}::"ItemType"`
+          : Prisma.empty;
+      const minFilter =
+        q.minSimilarity !== undefined
+          ? Prisma.sql`AND (1 - (t."imageVector" <=> src.v)) >= ${q.minSimilarity}`
+          : Prisma.empty;
+  
+      const hits = await this.prisma.$queryRaw<{ id: number; similarity: number }[]>`
+        WITH src AS (SELECT "imageVector" AS v FROM "Item" WHERE id = ${itemId})
+        SELECT t.id, 1 - (t."imageVector" <=> src.v) AS similarity
+        FROM "Item" t, src
+        WHERE t.id <> ${itemId}
+          AND t."imageVector" IS NOT NULL
+          AND t.status = 'OPEN'::"ItemStatus"
+          ${typeFilter}
+          ${minFilter}
+        ORDER BY t."imageVector" <=> src.v
+        LIMIT ${limit}
+      `;
+      if (hits.length === 0) return { ready: true, items: [] };
+  
+      const rows = await this.prisma.item.findMany({
+        where: { id: { in: hits.map((h) => h.id) } },
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          category: true,
+          status: true,
+          locationLat: true,
+          locationLng: true,
+          storageLocation: true,
+          createdAt: true,
+          institution: { select: { id: true, name: true } },
+          images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
+        },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r]));
+  
+      // 유사도 순서를 그대로 유지하면서 상세 정보를 붙임
+      const items = await Promise.all(
+        hits
+          .filter((h) => byId.has(h.id))
+          .map(async (h) => {
+            const { images, ...item } = byId.get(h.id)!;
+            return {
+              ...item,
+              storageLocation: user ? item.storageLocation : null, // 비로그인은 가림
+              similarity: Math.round(h.similarity * 1000) / 1000, // 1에 가까울수록 비슷함
+              thumbnailUrl: images[0] ? await this.s3.createDownloadUrl(images[0].s3Key) : null,
+            };
+          }),
+      );
+      return { ready: true, items };
     }
 
   /** 상세 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */

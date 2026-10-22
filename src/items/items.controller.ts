@@ -10,6 +10,7 @@ import { RolesGuard } from '../common/roles.guard';
 import { ItemsService } from './items.service';
 import { ListItemsQueryDto } from './items-query.dto';
 import { MapItemsQueryDto } from './items-map-query.dto';
+import { SimilarItemsQueryDto } from './items-similar-query.dto';
 
 class CreateItemDto {
   @ApiProperty({ example: '검정 지갑', description: '게시글 제목' })
@@ -111,6 +112,22 @@ export class ItemsController {
   @ApiResponse({ status: 404, description: '게시글을 찾을 수 없음' })
   detail(@CurrentUser() user: AuthUser | null, @Param('id', ParseIntPipe) id: number) {
     return this.items.detail(user, id);
+  }
+
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get(':id/similar')
+  @ApiOperation({
+    summary: '비슷한 게시글 찾기 (사진 유사도)',
+    description:
+      '이 게시글의 사진과 비슷한 게시글을 유사도 순으로 반환합니다. 기본은 반대 유형만(분실물이면 습득물) 진행 중인 게시글에서 찾습니다. similarity는 0~1이며 1에 가까울수록 비슷합니다. 사진 분석이 아직 끝나지 않은 게시글은 ready: false를 반환합니다. 로그인 없이 조회할 수 있고 보관 장소는 로그인 사용자에게만 내려갑니다.',
+  })
+  @ApiResponse({ status: 404, description: '게시글을 찾을 수 없음' })
+  similar(
+    @CurrentUser() user: AuthUser | null,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: SimilarItemsQueryDto,
+  ) {
+    return this.items.similar(user, id, query);
   }
 
   // ── 쓰기: 로그인 필요 ──

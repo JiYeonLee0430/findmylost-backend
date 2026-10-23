@@ -24,6 +24,15 @@ class RequestVerificationDto {
 export class InstitutionsController {
   constructor(private service: InstitutionsService) {}
 
+  @Get('institutions')
+  @ApiOperation({
+    summary: '기관 목록',
+    description: '기관 인증 신청 시 선택할 기관 목록입니다. 로그인이 필요합니다.',
+  })
+  listInstitutions() {
+    return this.service.listInstitutions();
+  }
+
   @Roles(Role.USER)
   @Post('institutions/verification-requests')
   @ApiOperation({

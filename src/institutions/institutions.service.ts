@@ -7,6 +7,13 @@ import { AuthUser } from '../common/current-user.decorator';
 export class InstitutionsService {
   constructor(private prisma: PrismaService) {}
 
+  listInstitutions() {
+    return this.prisma.institution.findMany({
+      select: { id: true, name: true, domain: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   async requestVerification(user: AuthUser, institutionId: number, evidence?: string) {
     if (user.role !== Role.USER) throw new ConflictException('이미 기관 권한이 있습니다.');
     if (!user.mfaEnabled) throw new ForbiddenException('기관 인증 신청 전에 MFA를 먼저 등록해주세요.');

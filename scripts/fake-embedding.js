@@ -2,6 +2,12 @@
 // 같은 그룹번호면 비슷한 벡터, 다른 그룹번호면 전혀 다른 벡터가 만들어짐
 require('dotenv').config();
 
+const dbUrl = process.env.DATABASE_URL || '';
+if (!/@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl)) {
+  console.error('중단: DATABASE_URL이 로컬 DB가 아닙니다. 서버 DB에는 가짜 벡터를 넣을 수 없어요.');
+  process.exit(1);
+}
+
 function rng(seed) {
   let s = seed >>> 0;
   return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;

@@ -1,6 +1,6 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProperty, ApiPropertyOptional, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ItemStatus, ItemType } from '@prisma/client';
 import { IsEnum, IsLatitude, IsLongitude, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser } from '../common/current-user.decorator';
@@ -11,6 +11,9 @@ import { ItemsService } from './items.service';
 import { ListItemsQueryDto } from './items-query.dto';
 import { MapItemsQueryDto } from './items-map-query.dto';
 import { SimilarItemsQueryDto } from './items-similar-query.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { SearchByImageDto } from './items-image-search.dto';
+import type { UploadedImage } from './items-image-search.dto';
 
 class CreateItemDto {
   @ApiProperty({ example: '검정 지갑', description: '게시글 제목' })
@@ -128,6 +131,39 @@ export class ItemsController {
     @Query() query: SimilarItemsQueryDto,
   ) {
     return this.items.similar(user, id, query);
+  }
+
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Post('search-by-image')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 1024 * 1024, files: 1 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary', description: '검색할 물건 사진 (JPEG/PNG, 1MB 이하)' },
+        target: { type: 'string', enum: ['FOUND', 'LOST', 'ALL'], default: 'FOUND', description: '검색 대상' },
+        limit: { type: 'number', default: 10, description: '가져올 개수 (최대 20)' },
+        minSimilarity: { type: 'number', description: '이 값 이상으로 비슷한 것만 (0~1)' },
+      },
+    },
+  })
+  @ApiOperation({
+    summary: '사진으로 비슷한 게시글 검색',
+    description:
+      '물건 사진을 올리면 AI가 분석해서 비슷한 게시글을 유사도 순으로 반환합니다. 로그인이 필요하고 사용자당 1분에 10회로 제한됩니다. 기본은 진행 중인 습득물(FOUND)에서 찾습니다. 올린 사진은 저장되지 않습니다. 사진은 1MB 이하여야 하며 화면에서 줄여서 보내야 합니다. similarity는 0~1이며 1에 가까울수록 비슷하다는 뜻으로, 같은 물건일 확률이 아닙니다.',
+  })
+  @ApiResponse({ status: 400, description: '사진이 없거나 JPEG/PNG가 아님' })
+  @ApiResponse({ status: 413, description: '1MB 초과' })
+  @ApiResponse({ status: 429, description: '요청이 너무 많음' })
+  @ApiResponse({ status: 503, description: '이미지 분석 서비스 오류' })
+  searchByImage(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file: UploadedImage | undefined,
+    @Body() dto: SearchByImageDto,
+  ) {
+    return this.items.searchByImage(user, file, dto);
   }
 
   // ── 쓰기: 로그인 필요 ──

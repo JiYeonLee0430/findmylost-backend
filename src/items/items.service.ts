@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { ItemStatus, ItemType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
@@ -6,6 +6,9 @@ import { S3Service } from './s3.service';
 import { ListItemsQueryDto } from './items-query.dto';
 import { MapItemsQueryDto } from './items-map-query.dto';
 import { SimilarItemsQueryDto } from './items-similar-query.dto';
+import { BedrockService } from './bedrock.service';
+import { SearchByImageDto } from './items-image-search.dto';
+import type { UploadedImage } from './items-image-search.dto';
 
 export interface CreateItemInput {
   title: string;
@@ -26,7 +29,13 @@ export interface UpdateItemInput {
 
 @Injectable()
 export class ItemsService {
-  constructor(private prisma: PrismaService, private s3: S3Service) {}
+  private imageSearchLog = new Map<number, number[]>(); // 사용자별 최근 검색 시각 (서버 한 대 기준)
+
+  constructor(
+    private prisma: PrismaService,
+    private s3: S3Service,
+    private bedrock: BedrockService,
+  ) {}
 
   async create(user: AuthUser, input: CreateItemInput) {
     const isOrg = user.role === Role.ORG_ADMIN;
@@ -231,6 +240,94 @@ export class ItemsService {
           }),
       );
       return { ready: true, items };
+    }
+
+    /** 사진으로 검색: 업로드한 사진의 임베딩과 게시글들의 임베딩을 코사인 거리로 비교 */
+    async searchByImage(user: AuthUser, file: UploadedImage | undefined, q: SearchByImageDto) {
+      if (!file) throw new BadRequestException('사진 파일(file)을 보내주세요.');
+      if (!this.isJpegOrPng(file.buffer)) {
+        throw new BadRequestException('JPEG 또는 PNG 이미지만 검색할 수 있습니다.');
+      }
+      this.checkImageSearchLimit(user.id);
+  
+      const embedding = await this.bedrock.embedImage(file.buffer);
+      const vec = `[${embedding.join(',')}]`; // Bedrock이 준 숫자 배열만 문자열로 만들고, 쿼리에는 파라미터로 전달
+  
+      const limit = q.limit ?? 10;
+      const target = q.target ?? 'FOUND';
+      const typeFilter = target === 'ALL' ? Prisma.empty : Prisma.sql`AND t.type = ${target}::"ItemType"`;
+      const minFilter =
+        q.minSimilarity !== undefined
+          ? Prisma.sql`AND (1 - (t."imageVector" <=> ${vec}::vector)) >= ${q.minSimilarity}`
+          : Prisma.empty;
+  
+      const hits = await this.prisma.$queryRaw<{ id: number; similarity: number }[]>`
+        SELECT t.id, 1 - (t."imageVector" <=> ${vec}::vector) AS similarity
+        FROM "Item" t
+        WHERE t."imageVector" IS NOT NULL
+          AND t.status = 'OPEN'::"ItemStatus"
+          ${typeFilter}
+          ${minFilter}
+        ORDER BY t."imageVector" <=> ${vec}::vector
+        LIMIT ${limit}
+      `;
+  
+      return { items: await this.hydrateHits(user, hits) };
+    }
+  
+    /** 유사도 결과(id, similarity)에 게시글 정보와 썸네일을 붙임 (유사도 순서 유지) */
+    private async hydrateHits(user: AuthUser | null, hits: { id: number; similarity: number }[]) {
+      if (hits.length === 0) return [];
+      const rows = await this.prisma.item.findMany({
+        where: { id: { in: hits.map((h) => h.id) } },
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          category: true,
+          status: true,
+          locationLat: true,
+          locationLng: true,
+          storageLocation: true,
+          createdAt: true,
+          institution: { select: { id: true, name: true } },
+          images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
+        },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r]));
+  
+      return Promise.all(
+        hits
+          .filter((h) => byId.has(h.id))
+          .map(async (h) => {
+            const { images, ...item } = byId.get(h.id)!;
+            return {
+              ...item,
+              storageLocation: user ? item.storageLocation : null,
+              similarity: Math.round(h.similarity * 1000) / 1000,
+              thumbnailUrl: images[0] ? await this.s3.createDownloadUrl(images[0].s3Key) : null,
+            };
+          }),
+      );
+    }
+  
+    /** 확장자나 Content-Type이 아니라 파일 앞부분으로 JPEG/PNG인지 확인 */
+    private isJpegOrPng(b: Buffer) {
+      const jpeg = b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+      const png =
+        b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      return jpeg || png;
+    }
+  
+    /** 사용자당 1분에 10회 (비용 보호용, 서버가 여러 대면 대수만큼 늘어남) */
+    private checkImageSearchLimit(userId: number) {
+      const now = Date.now();
+      const recent = (this.imageSearchLog.get(userId) ?? []).filter((t) => now - t < 60_000);
+      if (recent.length >= 10) {
+        throw new HttpException('이미지 검색 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      recent.push(now);
+      this.imageSearchLog.set(userId, recent);
     }
 
   /** 상세 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */

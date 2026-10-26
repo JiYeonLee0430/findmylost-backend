@@ -38,9 +38,9 @@ export class InstitutionsController {
   @ApiOperation({
     summary: '기관 인증 신청',
     description:
-      '일반 계정(USER)이 기관 관리자 권한을 신청합니다. MFA를 먼저 등록해야 하며, 심사 중인 신청이 있으면 다시 신청할 수 없습니다. 운영자(SUPER_ADMIN)가 승인하면 기관 관리자(ORG_ADMIN)로 바뀝니다.',
+      '일반 계정(USER)이 기관 관리자 권한을 신청합니다. 이메일 인증과 MFA 등록을 먼저 완료해야 하며, 심사 중인 신청이 있으면 다시 신청할 수 없습니다. 운영자(SUPER_ADMIN)가 승인하면 기관 관리자(ORG_ADMIN)로 바뀝니다.',
   })
-  @ApiResponse({ status: 403, description: 'MFA 미등록 또는 일반 계정이 아님' })
+  @ApiResponse({ status: 403, description: '이메일 인증 또는 MFA 미완료, 또는 일반 계정이 아님' })
   @ApiResponse({ status: 404, description: '기관을 찾을 수 없음' })
   @ApiResponse({ status: 409, description: '이미 심사 중인 신청이 있거나 이미 기관 권한이 있음' })
   request(@CurrentUser() user: AuthUser, @Body() dto: RequestVerificationDto) {
@@ -51,7 +51,7 @@ export class InstitutionsController {
   @Get('admin/verification-requests')
   @ApiOperation({
     summary: '[운영자] 심사 대기 중인 기관 인증 신청 목록',
-    description: '운영자(SUPER_ADMIN) 전용이며 MFA 로그인이 필요합니다. 오래된 신청부터 반환합니다.',
+    description: '운영자(SUPER_ADMIN) 전용이며 MFA 로그인이 필요합니다. 오래된 신청부터 반환합니다.domainMatched는 신청자의 인증된 이메일 도메인이 기관 도메인과 같은지(서브도메인 포함)를 나타내며 참고용입니다. 자동 승인의 근거가 아닙니다.',
   })
   @ApiResponse({ status: 403, description: '운영자가 아니거나 MFA 인증이 필요함' })
   list() {

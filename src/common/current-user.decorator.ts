@@ -6,6 +6,7 @@ export interface AuthUser {
   institutionId: number | null;
   mfaEnabled: boolean;
   mfaVerified: boolean;
+  emailVerified: boolean;
 }
 
 export const CurrentUser = createParamDecorator(

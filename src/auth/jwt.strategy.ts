@@ -22,6 +22,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       institutionId: user.institutionId,
       mfaEnabled: user.mfaEnabled,
       mfaVerified: payload.mfa === true,
+      emailVerified: !!user.emailVerifiedAt,
     };
+
+    
   }
 }

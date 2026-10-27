@@ -40,8 +40,9 @@ export class ItemsService {
 
   async create(user: AuthUser, input: CreateItemInput) {
     const isOrg = user.role === Role.ORG_ADMIN;
-    if (input.storageLocation && !(isOrg && input.type === ItemType.FOUND)) {
-      throw new ForbiddenException('보관 장소는 기관 계정의 습득물에만 입력할 수 있습니다.');
+    // 보관 장소는 습득물(FOUND)에만 입력 가능 (일반 계정도 가능)
+    if (input.storageLocation && input.type !== ItemType.FOUND) {
+      throw new BadRequestException('보관 장소는 습득물에만 입력할 수 있습니다.');
     }
     return this.prisma.item.create({
       data: {
@@ -384,7 +385,7 @@ export class ItemsService {
     );
     return { items, total, page, limit };
   }
-  
+
   /** 상세 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */
   async detail(user: AuthUser | null, itemId: number) {
     const item = await this.prisma.item.findUnique({
@@ -434,13 +435,9 @@ export class ItemsService {
       throw new BadRequestException('수정할 항목을 보내주세요.');
     }
 
-    // 보관 장소는 기관 계정이 올린 습득물에서만 입력 가능 (null로 지우는 건 항상 허용)
-    if (input.storageLocation) {
-      const canSetStorage =
-        user.role === Role.ORG_ADMIN && item.type === ItemType.FOUND && item.institutionId !== null;
-      if (!canSetStorage) {
-        throw new ForbiddenException('보관 장소는 기관 계정의 습득물에만 입력할 수 있습니다.');
-      }
+    // 보관 장소는 습득물(FOUND)에만 입력 가능 (null로 지우는 건 항상 허용)
+    if (input.storageLocation && item.type !== ItemType.FOUND) {
+      throw new BadRequestException('보관 장소는 습득물에만 입력할 수 있습니다.');
     }
 
     return this.prisma.item.update({

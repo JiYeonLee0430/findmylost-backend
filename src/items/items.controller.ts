@@ -33,8 +33,8 @@ class CreateItemDto {
   @ApiProperty({ example: 127.1, description: '경도' })
   @IsLongitude() locationLng: number;
 
-  @ApiPropertyOptional({ example: '학생회관 1층 분실물센터', description: '보관 장소 (기관 계정의 습득물만 입력 가능)' })
-  @IsOptional() @IsString() storageLocation?: string;
+  @ApiPropertyOptional({ example: '학생회관 1층 분실물센터', description: '보관 장소 (습득물만 입력 가능)' })
+  @IsOptional() @IsString() @MaxLength(200) storageLocation?: string;
 }
 
 class UploadUrlDto {
@@ -194,17 +194,15 @@ export class ItemsController {
   }
 
   // ── 쓰기: 로그인 필요 ──
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Post()
   @ApiOperation({
     summary: '게시글 등록',
     description:
-      '로그인이 필요합니다. 기관 관리자(ORG_ADMIN)가 등록하면 자동으로 소속 기관이 연결됩니다. 보관 장소는 기관 계정의 습득물(FOUND)에만 입력할 수 있습니다. 사진은 등록 후 upload-url, S3 업로드, 이미지 등록 순서로 추가합니다.',
+      '로그인이 필요합니다. 기관 관리자(ORG_ADMIN)가 등록하면 자동으로 소속 기관이 연결됩니다. 보관 장소(storageLocation)는 습득물(FOUND)에만 입력할 수 있으며 일반 계정도 입력할 수 있습니다. 사진은 등록 후 upload-url, S3 업로드, 이미지 등록 순서로 추가합니다.',
   })
   @ApiResponse({ status: 401, description: '로그인 필요' })
-  @ApiResponse({ status: 403, description: '보관 장소를 입력할 수 없는 계정' })
+  @ApiResponse({ status: 400, description: '습득물이 아닌데 보관 장소를 입력함' })
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateItemDto) {
-    return this.items.create(user, dto);
+  return this.items.create(user, dto);
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)

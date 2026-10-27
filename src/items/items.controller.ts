@@ -194,6 +194,8 @@ export class ItemsController {
   }
 
   // ── 쓰기: 로그인 필요 ──
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Post()
   @ApiOperation({
     summary: '게시글 등록',
     description:
@@ -201,8 +203,11 @@ export class ItemsController {
   })
   @ApiResponse({ status: 401, description: '로그인 필요' })
   @ApiResponse({ status: 400, description: '습득물이 아닌데 보관 장소를 입력함' })
-  create(@CurrentUser() user: AuthUser, @Body() dto: CreateItemDto) {
-  return this.items.create(user, dto);
+  create(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateItemDto,
+  ) {
+    return this.items.create(user, dto);
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)

@@ -9,6 +9,7 @@ import { SimilarItemsQueryDto } from './items-similar-query.dto';
 import { BedrockService } from './bedrock.service';
 import { SearchByImageDto } from './items-image-search.dto';
 import type { UploadedImage } from './items-image-search.dto';
+import { ManageItemsQueryDto } from './items-mine-query.dto';
 
 export interface CreateItemInput {
   title: string;
@@ -329,7 +330,61 @@ export class ItemsService {
       recent.push(now);
       this.imageSearchLog.set(userId, recent);
     }
+  /** 내가 올린 게시글 (상태 무관) */
+  async listMine(user: AuthUser, q: ManageItemsQueryDto) {
+    return this.listManaged({ authorId: user.id }, q);
+  }
 
+  /** 우리 기관 게시글 전체 (기관 관리자 전용) */
+  async listOrg(user: AuthUser, q: ManageItemsQueryDto) {
+    if (user.role !== Role.ORG_ADMIN || user.institutionId === null) {
+      throw new ForbiddenException('기관 관리자만 조회할 수 있습니다.');
+    }
+    return this.listManaged({ institutionId: user.institutionId }, q);
+  }
+
+  private async listManaged(base: Prisma.ItemWhereInput, q: ManageItemsQueryDto) {
+    const page = q.page ?? 1;
+    const limit = q.limit ?? 20;
+    const where: Prisma.ItemWhereInput = {
+      ...base,
+      ...(q.type && { type: q.type }),
+      ...(q.status && { status: q.status }),
+    };
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.item.count({ where }),
+      this.prisma.item.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          category: true,
+          status: true,
+          locationLat: true,
+          locationLng: true,
+          storageLocation: true,
+          createdAt: true,
+          author: { select: { name: true } },
+          institution: { select: { id: true, name: true } },
+          images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
+        },
+      }),
+    ]);
+
+    const items = await Promise.all(
+      rows.map(async ({ images, ...item }) => ({
+        ...item,
+        thumbnailUrl: images[0] ? await this.s3.createDownloadUrl(images[0].s3Key) : null,
+      })),
+    );
+    return { items, total, page, limit };
+  }
+  
   /** 상세 조회: 비로그인도 가능, 보관 장소는 로그인 사용자에게만 */
   async detail(user: AuthUser | null, itemId: number) {
     const item = await this.prisma.item.findUnique({

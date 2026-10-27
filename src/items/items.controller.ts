@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProperty, ApiPropertyOptional, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
-import { ItemStatus, ItemType } from '@prisma/client';
+import { ItemStatus, ItemType, Role } from '@prisma/client';
 import { IsEnum, IsLatitude, IsLongitude, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { AuthUser } from '../common/current-user.decorator';
@@ -14,6 +14,8 @@ import { SimilarItemsQueryDto } from './items-similar-query.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SearchByImageDto } from './items-image-search.dto';
 import type { UploadedImage } from './items-image-search.dto';
+import { Roles } from '../common/roles.decorator';
+import { ManageItemsQueryDto } from './items-mine-query.dto';
 
 class CreateItemDto {
   @ApiProperty({ example: '검정 지갑', description: '게시글 제목' })
@@ -103,6 +105,31 @@ export class ItemsController {
   @ApiResponse({ status: 400, description: '영역 또는 중심 좌표가 없거나 범위가 잘못됨' })
   map(@CurrentUser() user: AuthUser | null, @Query() query: MapItemsQueryDto) {
     return this.items.mapItems(user, query);
+  }
+
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Get('mine')
+  @ApiOperation({
+    summary: '내가 올린 게시글 목록',
+    description:
+      '로그인한 사용자가 올린 게시글을 상태와 상관없이 최신순으로 반환합니다. 응답은 { items, total, page, limit }이며 보관 장소도 그대로 내려갑니다. 사진은 1시간 유효한 임시 URL(thumbnailUrl)입니다.',
+  })
+  @ApiResponse({ status: 401, description: '로그인 필요' })
+  mine(@CurrentUser() user: AuthUser, @Query() query: ManageItemsQueryDto) {
+    return this.items.listMine(user, query);
+  }
+
+  @Roles(Role.ORG_ADMIN)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Get('org')
+  @ApiOperation({
+    summary: '[기관 관리자] 우리 기관 게시글 목록',
+    description:
+      '기관 관리자(ORG_ADMIN)의 소속 기관 게시글 전체를 최신순으로 반환합니다. MFA 로그인이 필요하며, 같은 기관의 다른 관리자가 올린 게시글도 포함됩니다. status로 진행 중(OPEN)과 반환 완료(RETURNED)를 나눠서 볼 수 있습니다.',
+  })
+  @ApiResponse({ status: 403, description: '기관 관리자가 아니거나 MFA 인증이 필요함' })
+  org(@CurrentUser() user: AuthUser, @Query() query: ManageItemsQueryDto) {
+    return this.items.listOrg(user, query);
   }
 
   @UseGuards(OptionalJwtAuthGuard)

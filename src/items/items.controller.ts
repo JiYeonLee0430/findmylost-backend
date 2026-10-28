@@ -35,6 +35,12 @@ class CreateItemDto {
 
   @ApiPropertyOptional({ example: '학생회관 1층 분실물센터', description: '보관 장소 (습득물만 입력 가능)' })
   @IsOptional() @IsString() @MaxLength(200) storageLocation?: string;
+
+  @ApiPropertyOptional({ example: '검정 반지갑입니다. 안에 학생증이 들어 있어요.', description: '게시글 본문 설명 (최대 2000자)' })
+  @IsOptional() @IsString() @MaxLength(2000) content?: string;
+
+  @ApiPropertyOptional({ example: '도서관 2층 열람실', description: '분실 장소 (분실물만 입력 가능)' })
+  @IsOptional() @IsString() @MaxLength(200) lostLocation?: string;
 }
 
 class UploadUrlDto {
@@ -75,6 +81,12 @@ class UpdateItemDto {
   @ApiPropertyOptional({ type: String, nullable: true, example: '학생회관 1층', description: 'null을 보내면 삭제' })
   @IsOptional() @IsString() @MaxLength(200)
   storageLocation?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, description: '본문 설명 (null이면 삭제)' })
+  @IsOptional() @IsString() @MaxLength(2000) content?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, example: '도서관 2층 열람실', description: '분실 장소 (분실물만, null이면 삭제)' })
+  @IsOptional() @IsString() @MaxLength(200) lostLocation?: string | null;
 }
 
 @ApiTags('Items (게시글)')

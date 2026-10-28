@@ -18,6 +18,8 @@ export interface CreateItemInput {
   locationLat: number;
   locationLng: number;
   storageLocation?: string;
+  lostLocation?: string;
+  content?: string;  
 }
 
 export interface UpdateItemInput {
@@ -26,6 +28,8 @@ export interface UpdateItemInput {
   locationLat?: number;
   locationLng?: number;
   storageLocation?: string | null;
+  lostLocation?: string | null;
+  content?: string | null;
 }
 
 @Injectable()
@@ -43,6 +47,9 @@ export class ItemsService {
     // 보관 장소는 습득물(FOUND)에만 입력 가능 (일반 계정도 가능)
     if (input.storageLocation && input.type !== ItemType.FOUND) {
       throw new BadRequestException('보관 장소는 습득물에만 입력할 수 있습니다.');
+    }
+    if (input.lostLocation && input.type !== ItemType.LOST) {
+      throw new BadRequestException('분실 장소는 분실물에만 입력할 수 있습니다.');
     }
     return this.prisma.item.create({
       data: {
@@ -83,6 +90,7 @@ export class ItemsService {
           locationLng: true,
           storageLocation: true,
           createdAt: true,
+          lostLocation: true,
           institution: { select: { id: true, name: true } },
           images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
         },
@@ -401,6 +409,8 @@ export class ItemsService {
         storageLocation: true,
         createdAt: true,
         authorId: true,
+        content: true,
+        lostLocation: true,
         author: { select: { name: true } },
         institution: { select: { id: true, name: true } },
         images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: { id: true, s3Key: true } },
@@ -439,6 +449,10 @@ export class ItemsService {
     if (input.storageLocation && item.type !== ItemType.FOUND) {
       throw new BadRequestException('보관 장소는 습득물에만 입력할 수 있습니다.');
     }
+    if (input.lostLocation && item.type !== ItemType.LOST) {
+      throw new BadRequestException('분실 장소는 분실물에만 입력할 수 있습니다.');
+    }
+    
 
     return this.prisma.item.update({
       where: { id: itemId },
@@ -448,6 +462,8 @@ export class ItemsService {
         locationLat: input.locationLat,
         locationLng: input.locationLng,
         storageLocation: input.storageLocation,
+        lostLocation: input.lostLocation,
+        content: input.content,
       },
       select: {
         id: true,
@@ -459,6 +475,8 @@ export class ItemsService {
         locationLng: true,
         storageLocation: true,
         createdAt: true,
+        lostLocation: true,
+        content: true,
       },
     });
   }

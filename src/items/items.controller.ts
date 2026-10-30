@@ -16,6 +16,7 @@ import { SearchByImageDto } from './items-image-search.dto';
 import type { UploadedImage } from './items-image-search.dto';
 import { Roles } from '../common/roles.decorator';
 import { ManageItemsQueryDto } from './items-mine-query.dto';
+import { Throttle } from '@nestjs/throttler';
 
 class CreateItemDto {
   @ApiProperty({ example: '검정 지갑', description: '게시글 제목' })
@@ -173,6 +174,7 @@ export class ItemsController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } }) // 사진 검색: 1분 20회
   @Post('search-by-image')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 1024 * 1024, files: 1 } }))
   @ApiConsumes('multipart/form-data')

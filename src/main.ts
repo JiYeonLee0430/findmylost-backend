@@ -2,9 +2,12 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.set('trust proxy', 2); // 사용자 → CloudFront → nginx → Node: 오른쪽에서 2칸 건너뛴 값이 사용자 IP
+
   // 1. CORS 허용 (프론트엔드 로컬 개발 포트 허용)
   app.enableCors({
     origin: ['http://localhost:5173', 'http://localhost:3000'],

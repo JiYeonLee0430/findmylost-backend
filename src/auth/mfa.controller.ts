@@ -5,6 +5,7 @@ import { IsString, Length } from 'class-validator';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { AuthUser } from '../common/current-user.decorator';
 import { MfaService } from './mfa.service';
+import { Throttle } from '@nestjs/throttler';
 
 class CodeDto {
   @ApiProperty({ example: '123456', description: '인증 앱에 표시된 6자리 코드' })
@@ -23,6 +24,7 @@ export class MfaController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })    // 1분 5회
   @Post('setup')
   @ApiOperation({
     summary: 'MFA 등록 시작',
@@ -34,7 +36,7 @@ export class MfaController {
   }
 
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(AuthGuard('jwt'))  @Throttle({ default: { limit: 5, ttl: 60_000 } })    // 1분 5회
   @Post('enable')
   @ApiOperation({
     summary: 'MFA 활성화',
@@ -45,6 +47,7 @@ export class MfaController {
     return this.mfa.enable(user.id, dto.code);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })    // 모두 1분 5회
   @Post('login')
   @ApiOperation({
     summary: 'MFA 로그인 (2단계)',

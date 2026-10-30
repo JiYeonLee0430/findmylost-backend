@@ -1,5 +1,6 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { EmailVerificationService } from './email-verification.service';
 import { LoginDto, SendVerificationDto, SignupDto, VerifyEmailDto } from './auth.dto';
@@ -12,12 +13,14 @@ export class AuthController {
     private emailVerification: EmailVerificationService,
   ) {}
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // 가입: 1분 5회
   @Post('signup')
   @ApiOperation({ summary: '일반 회원가입', description: '모든 가입은 일반 계정(USER)으로 생성됩니다.' })
   signup(@Body() dto: SignupDto) {
     return this.auth.signup(dto);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } }) // 로그인: 1분 10회
   @Post('login')
   @ApiOperation({
     summary: '로그인',
@@ -27,6 +30,7 @@ export class AuthController {
     return this.auth.login(dto);
   }
 
+  @Throttle({ default: { limit: 3, ttl: 60_000 } }) // 인증 메일 발송: 1분 3회 (메일 폭탄 방지)
   @Post('email/send')
   @ApiOperation({
     summary: '인증 메일 (재)발송',
@@ -36,6 +40,7 @@ export class AuthController {
     return this.emailVerification.resendByEmail(dto.email);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } }) // 이메일 인증 확인: 1분 10회
   @Post('email/verify')
   @ApiOperation({
     summary: '이메일 인증 토큰 검증',

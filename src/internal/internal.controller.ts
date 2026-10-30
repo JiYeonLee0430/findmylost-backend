@@ -3,6 +3,7 @@ import {
   Param, ParseIntPipe, Post, UseGuards,
 } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsNumber, IsOptional, IsString, MaxLength,
 } from 'class-validator';
@@ -25,6 +26,7 @@ class EmbeddingDto {
   model?: string;
 }
 
+@SkipThrottle() // Lambda 내부 API는 IP 요청 제한에서 제외
 @ApiExcludeController()
 @UseGuards(InternalApiKeyGuard)
 @Controller('internal/items')

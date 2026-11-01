@@ -6,6 +6,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.useBodyParser('json', { limit: '1mb' });
   app.set('trust proxy', 2); // 사용자 → CloudFront → nginx → Node: 오른쪽에서 2칸 건너뛴 값이 사용자 IP
 
   // 1. CORS 허용 (프론트엔드 로컬 개발 포트 허용)

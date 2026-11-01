@@ -140,3 +140,27 @@ model EmailVerificationToken {
 
   @@index([userId])
 }
+
+/// 공공 API(경찰청 습득물)에서 Lambda가 수집해 저장하는 습득물
+model PublicItem {
+  id              Int       @id @default(autoincrement())
+  atcId           String
+  fdSn            String
+  name            String // 물품명
+  category        String? // 물품 분류명
+  foundDate       DateTime? @db.Date // 습득일자
+  storagePlace    String? // 보관 장소 (기관 이름 원문)
+  imageUrl        String?
+  institutionName String?
+  phone           String?
+  content         String?   @db.Text // 특이사항
+  region          String? // 지역명 (예: 서울)
+  raw             Json // 원본 응답 전체. API 응답으로는 내려보내지 않음
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([atcId, fdSn])
+  @@index([foundDate])
+  @@index([category])
+  @@index([region])
+}

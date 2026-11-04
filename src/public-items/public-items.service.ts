@@ -3,17 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { maskNames } from '../common/mask-name.util';
 import { ListPublicItemsQueryDto } from './public-items-query.dto';
-
-/** 우리 분류 선택지 → 공공 분류("대분류 > 소분류") 매핑 */
-const CATEGORY_RULES: Record<string, { mains?: string[]; contains?: string[] }> = {
-  전자기기: { mains: ['전자기기', '휴대폰'] },
-  '지갑/카드': { mains: ['지갑', '카드', '증명서'] },
-  귀중품: { mains: ['귀금속', '현금'] },
-  가방: { mains: ['가방', '쇼핑백'] },
-  의류: { mains: ['의류'] },
-  우산: { contains: ['우산'] },
-};
-const KNOWN_MAINS = Object.values(CATEGORY_RULES).flatMap((r) => r.mains ?? []);
+import { publicCategoryWhere } from './public-category';
 
 const LIST_SELECT = {
   id: true, name: true, category: true, foundDate: true,
@@ -25,32 +15,6 @@ type ListRow = Prisma.PublicItemGetPayload<{ select: typeof LIST_SELECT }>;
 @Injectable()
 export class PublicItemsService {
   constructor(private prisma: PrismaService) {}
-
-  private categoryWhere(category: string): Prisma.PublicItemWhereInput {
-    const rule = CATEGORY_RULES[category];
-    if (rule) {
-      return {
-        OR: [
-          ...(rule.mains ?? []).map((m) => ({ category: { startsWith: m } })),
-          ...(rule.contains ?? []).map((c) => ({ category: { contains: c } })),
-        ],
-      };
-    }
-    if (category === '기타') {
-      return {
-        OR: [
-          { category: null },
-          {
-            NOT: [
-              ...KNOWN_MAINS.map((m) => ({ category: { startsWith: m } })),
-              { category: { contains: '우산' } },
-            ],
-          },
-        ],
-      };
-    }
-    return { category: { startsWith: category } }; // 공공 대분류를 직접 보낸 경우
-  }
 
   private toListItem(r: ListRow) {
     const [main, sub] = (r.category ?? '').split(' > ');
@@ -77,7 +41,7 @@ export class PublicItemsService {
         { foundDate: { gte: from, ...(q.to && { lte: new Date(q.to) }) } },
         ...(q.region ? [{ region: q.region }] : []),
         ...(q.keyword ? [{ name: { contains: q.keyword, mode: 'insensitive' as const } }] : []),
-        ...(q.category ? [this.categoryWhere(q.category)] : []),
+        ...(q.category ? [publicCategoryWhere(q.category)] : []),
       ],
     };
     const orderBy = [{ foundDate: 'desc' as const }, { id: 'desc' as const }];

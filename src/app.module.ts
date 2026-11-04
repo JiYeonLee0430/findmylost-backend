@@ -9,6 +9,7 @@ import { ItemsModule } from './items/items.module';
 import { InternalModule } from './internal/internal.module';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { PublicItemsModule } from './public-items/public-items.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
     InstitutionsModule,
     ItemsModule,
     InternalModule,
+    PublicItemsModule,
   ],
   controllers: [AppController],
   providers: [

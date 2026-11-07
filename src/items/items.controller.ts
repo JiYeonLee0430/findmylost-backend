@@ -240,13 +240,30 @@ export class ItemsController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Post(':id/images')
   @ApiOperation({
-    summary: '업로드한 사진 등록',
-    description: 'S3 업로드가 끝난 뒤 upload-url 응답의 key를 보내 게시글에 사진을 연결합니다. key는 items/{게시글ID}/ 로 시작해야 합니다.',
+    summary: '업로드한 사진 등록 (글당 최대 5장)',
+    description:
+      'S3 업로드가 끝난 뒤 upload-url 응답의 key를 보내 게시글에 사진을 연결합니다. key는 items/{게시글ID}/ 로 시작해야 합니다. 같은 key를 다시 보내면 기존 사진을 그대로 돌려줍니다.',
   })
-  @ApiResponse({ status: 400, description: '잘못된 S3 key' })
+  @ApiResponse({ status: 400, description: '잘못된 S3 key 또는 사진 5장 초과' })
   @ApiResponse({ status: 403, description: '권한 없음' })
   registerImage(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: RegisterImageDto) {
     return this.items.registerImage(user, id, dto.key);
+  }
+
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Delete(':id/images/:imageId')
+  @ApiOperation({
+    summary: '사진 1장 삭제',
+    description: '사진, S3 파일, AI 벡터를 함께 삭제합니다. imageId는 상세 조회 응답의 images[].id 입니다.',
+  })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  @ApiResponse({ status: 404, description: '사진을 찾을 수 없음' })
+  removeImage(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('imageId', ParseIntPipe) imageId: number,
+  ) {
+    return this.items.removeImage(user, id, imageId);
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)

@@ -11,6 +11,8 @@ import { SearchByImageDto } from './items-image-search.dto';
 import type { UploadedImage } from './items-image-search.dto';
 import { ManageItemsQueryDto } from './items-mine-query.dto';
 
+const MAX_IMAGES = 5;
+
 export interface CreateItemInput {
   title: string;
   type: ItemType;
@@ -182,75 +184,55 @@ export class ItemsService {
       return 6371 * 2 * Math.asin(Math.sqrt(a));
     }
   
-    /** 비슷한 게시글 찾기: 저장된 임베딩 벡터의 코사인 거리로 비교 */
-    async similar(user: AuthUser | null, itemId: number, q: SimilarItemsQueryDto) {
-      const limit = q.limit ?? 10;
-  
-      // imageVector는 Prisma가 직접 못 읽는 타입이라 raw 쿼리로 확인
-      const src = await this.prisma.$queryRaw<{ type: ItemType; ready: boolean }[]>`
-        SELECT type, ("imageVector" IS NOT NULL) AS ready FROM "Item" WHERE id = ${itemId}
-      `;
-      if (src.length === 0) throw new NotFoundException('게시글을 찾을 수 없습니다.');
-      if (!src[0].ready) return { ready: false, items: [] }; // 사진 분석이 아직 안 끝남
-  
-      const targetType = src[0].type === ItemType.LOST ? ItemType.FOUND : ItemType.LOST;
-      const typeFilter =
-        (q.scope ?? 'opposite') === 'opposite'
-          ? Prisma.sql`AND t.type = ${targetType}::"ItemType"`
-          : Prisma.empty;
-      const minFilter =
-        q.minSimilarity !== undefined
-          ? Prisma.sql`AND (1 - (t."imageVector" <=> src.v)) >= ${q.minSimilarity}`
-          : Prisma.empty;
-  
-      const hits = await this.prisma.$queryRaw<{ id: number; similarity: number }[]>`
-        WITH src AS (SELECT "imageVector" AS v FROM "Item" WHERE id = ${itemId})
-        SELECT t.id, 1 - (t."imageVector" <=> src.v) AS similarity
-        FROM "Item" t, src
-        WHERE t.id <> ${itemId}
-          AND t."imageVector" IS NOT NULL
-          AND t.status = 'OPEN'::"ItemStatus"
-          ${typeFilter}
-          ${minFilter}
-        ORDER BY t."imageVector" <=> src.v
-        LIMIT ${limit}
-      `;
-      if (hits.length === 0) return { ready: true, items: [] };
-  
-      const rows = await this.prisma.item.findMany({
-        where: { id: { in: hits.map((h) => h.id) } },
-        select: {
-          id: true,
-          title: true,
-          type: true,
-          category: true,
-          status: true,
-          locationLat: true,
-          locationLng: true,
-          storageLocation: true,
-          createdAt: true,
-          institution: { select: { id: true, name: true } },
-          images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
-        },
-      });
-      const byId = new Map(rows.map((r) => [r.id, r]));
-  
-      // 유사도 순서를 그대로 유지하면서 상세 정보를 붙임
-      const items = await Promise.all(
-        hits
-          .filter((h) => byId.has(h.id))
-          .map(async (h) => {
-            const { images, ...item } = byId.get(h.id)!;
-            return {
-              ...item,
-              storageLocation: user ? item.storageLocation : null, // 비로그인은 가림
-              similarity: Math.round(h.similarity * 1000) / 1000, // 1에 가까울수록 비슷함
-              thumbnailUrl: images[0] ? await this.s3.createDownloadUrl(images[0].s3Key) : null,
-            };
-          }),
-      );
-      return { ready: true, items };
-    }
+  /** 비슷한 글: 내 글의 사진들과 상대 글의 사진들을 모두 비교해서 가장 높은 유사도를 글 점수로 사용 */
+  async similar(user: AuthUser | null, itemId: number, q: SimilarItemsQueryDto) {
+    const limit = q.limit ?? 10;
+
+    const src = await this.prisma.item.findUnique({ where: { id: itemId }, select: { type: true } });
+    if (!src) throw new NotFoundException('게시글을 찾을 수 없습니다.');
+
+    // 등록된 사진 중 AI 분석(벡터)이 끝난 게 하나라도 있는지
+    const ready = await this.prisma.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n
+      FROM "ImageEmbedding" e
+      JOIN "ItemImage" i ON i."s3Key" = e."s3Key"
+      WHERE i."itemId" = ${itemId}
+    `;
+    if (ready[0].n === 0) return { ready: false, items: [] }; // 사진 분석이 아직 안 끝남
+
+    const targetType = src.type === ItemType.LOST ? ItemType.FOUND : ItemType.LOST;
+    const typeFilter =
+      (q.scope ?? 'opposite') === 'opposite'
+        ? Prisma.sql`AND t.type = ${targetType}::"ItemType"`
+        : Prisma.empty;
+    const minFilter =
+      q.minSimilarity !== undefined
+        ? Prisma.sql`HAVING MAX(1 - (te.vector <=> se.vector)) >= ${q.minSimilarity}`
+        : Prisma.empty;
+
+    const hits = await this.prisma.$queryRaw<{ id: number; similarity: number }[]>`
+      WITH se AS (
+        SELECT e.vector
+        FROM "ImageEmbedding" e
+        JOIN "ItemImage" i ON i."s3Key" = e."s3Key"
+        WHERE i."itemId" = ${itemId}
+      )
+      SELECT t.id, MAX(1 - (te.vector <=> se.vector))::float8 AS similarity
+      FROM "Item" t
+      JOIN "ItemImage" ti ON ti."itemId" = t.id
+      JOIN "ImageEmbedding" te ON te."s3Key" = ti."s3Key"
+      CROSS JOIN se
+      WHERE t.id <> ${itemId}
+        AND t.status = 'OPEN'::"ItemStatus"
+        ${typeFilter}
+      GROUP BY t.id
+      ${minFilter}
+      ORDER BY similarity DESC
+      LIMIT ${limit}
+    `;
+
+    return { ready: true, items: await this.hydrateHits(user, hits) };
+  }
 
     /** 사진으로 검색: 업로드한 사진의 임베딩과 게시글들의 임베딩을 코사인 거리로 비교 */
     async searchByImage(user: AuthUser, file: UploadedImage | undefined, q: SearchByImageDto) {
@@ -268,17 +250,20 @@ export class ItemsService {
       const typeFilter = target === 'ALL' ? Prisma.empty : Prisma.sql`AND t.type = ${target}::"ItemType"`;
       const minFilter =
         q.minSimilarity !== undefined
-          ? Prisma.sql`AND (1 - (t."imageVector" <=> ${vec}::vector)) >= ${q.minSimilarity}`
+          ? Prisma.sql`HAVING MAX(1 - (te.vector <=> ${vec}::vector)) >= ${q.minSimilarity}`
           : Prisma.empty;
   
+      // 올린 사진과 모든 등록 사진을 비교하고, 글마다 가장 높은 유사도를 점수로 사용
       const hits = await this.prisma.$queryRaw<{ id: number; similarity: number }[]>`
-        SELECT t.id, 1 - (t."imageVector" <=> ${vec}::vector) AS similarity
+        SELECT t.id, MAX(1 - (te.vector <=> ${vec}::vector))::float8 AS similarity
         FROM "Item" t
-        WHERE t."imageVector" IS NOT NULL
-          AND t.status = 'OPEN'::"ItemStatus"
+        JOIN "ItemImage" ti ON ti."itemId" = t.id
+        JOIN "ImageEmbedding" te ON te."s3Key" = ti."s3Key"
+        WHERE t.status = 'OPEN'::"ItemStatus"
           ${typeFilter}
-          ${minFilter}
-        ORDER BY t."imageVector" <=> ${vec}::vector
+        GROUP BY t.id
+        ${minFilter}
+        ORDER BY similarity DESC
         LIMIT ${limit}
       `;
   
@@ -419,9 +404,13 @@ export class ItemsService {
     if (!item) throw new NotFoundException('게시글을 찾을 수 없습니다.');
 
     const { images, authorId, ...rest } = item;
-    const imageUrls = await Promise.all(images.map((i) => this.s3.createDownloadUrl(i.s3Key)));
+    const imageList = await Promise.all(
+      images.map(async (i) => ({ id: i.id, url: await this.s3.createDownloadUrl(i.s3Key) })),
+    );
+    const imageUrls = imageList.map((i) => i.url);
     return {
       ...rest,
+      images: imageList.filter((i): i is { id: number; url: string } => !!i.url),
       storageLocation: user ? rest.storageLocation : null, // 비로그인은 가림
       isMine: user ? authorId === user.id : false,
       imageUrls: imageUrls.filter((u): u is string => !!u),
@@ -492,11 +481,37 @@ export class ItemsService {
     return this.s3.createUploadUrl(itemId, filename, contentType);
   }
 
+    /** 사진 등록: 글당 최대 5장. 같은 사진을 다시 등록하면 기존 것을 그대로 돌려줌 */
   async registerImage(user: AuthUser, itemId: number, s3Key: string) {
-    await this.assertCanManage(user, itemId);
-    if (!s3Key.startsWith(`items/${itemId}/`)) throw new BadRequestException('잘못된 S3 key입니다.');
-    return this.prisma.itemImage.create({ data: { itemId, s3Key } });
-  }
+      await this.assertCanManage(user, itemId);
+      if (!s3Key.startsWith(`items/${itemId}/`)) throw new BadRequestException('잘못된 S3 key입니다.');
+  
+      const existing = await this.prisma.itemImage.findFirst({ where: { itemId, s3Key } });
+      if (existing) return existing;
+  
+      const count = await this.prisma.itemImage.count({ where: { itemId } });
+      if (count >= MAX_IMAGES) {
+        throw new BadRequestException(`사진은 최대 ${MAX_IMAGES}장까지 등록할 수 있습니다.`);
+      }
+      return this.prisma.itemImage.create({ data: { itemId, s3Key, sortOrder: count } });
+    }
+    /** 사진 1장 삭제: DB 사진 + AI 벡터 + S3 파일 */
+  async removeImage(user: AuthUser, itemId: number, imageId: number) {
+      await this.assertCanManage(user, itemId);
+      const img = await this.prisma.itemImage.findFirst({ where: { id: imageId, itemId } });
+      if (!img) throw new NotFoundException('사진을 찾을 수 없습니다.');
+  
+      await this.prisma.$transaction([
+        this.prisma.itemImage.delete({ where: { id: imageId } }),
+        this.prisma.$executeRaw`DELETE FROM "ImageEmbedding" WHERE "s3Key" = ${img.s3Key}`,
+      ]);
+      try {
+        await this.s3.deleteObjects([img.s3Key]);
+      } catch (e) {
+        console.error(`사진 파일 삭제 실패 item=${itemId} image=${imageId}`, e);
+      }
+      return { ok: true };
+    }
 
   async remove(user: AuthUser, itemId: number) {
     await this.assertCanManage(user, itemId);

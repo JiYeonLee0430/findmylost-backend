@@ -113,6 +113,7 @@ model Item {
   institution   Institution? @relation(fields: [institutionId], references: [id])
 
   images ItemImage[]
+  embeddings      ImageEmbedding[]
 
   @@index([institutionId])
   @@index([type, status])
@@ -163,4 +164,18 @@ model PublicItem {
   @@index([foundDate])
   @@index([category])
   @@index([region])
+}
+
+/// 사진(s3Key)마다 벡터 1개. Lambda가 사진 등록보다 먼저 보내도 저장되도록 ItemImage와 분리
+model ImageEmbedding {
+  id        Int                         @id @default(autoincrement())
+  itemId    Int
+  item      Item                        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  s3Key     String                      @unique
+  vector    Unsupported("vector(1024)")
+  model     String?
+  createdAt DateTime                    @default(now())
+  updatedAt DateTime                    @default(now())
+
+  @@index([itemId])
 }

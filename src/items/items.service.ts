@@ -284,6 +284,7 @@ export class ItemsService {
           locationLat: true,
           locationLng: true,
           storageLocation: true,
+          lostLocation: true, // 분실 장소 (분실물만 값이 있음)
           createdAt: true,
           institution: { select: { id: true, name: true } },
           images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },

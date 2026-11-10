@@ -64,6 +64,10 @@ model User {
   items                Item[]
   verificationRequests OrgVerificationRequest[] @relation("RequestApplicant") // 내가 낸 신청
   reviewedRequests     OrgVerificationRequest[] @relation("AdminReviews")     // 내가 심사한 신청
+
+  startedConversations Conversation[] @relation("ConversationStarter")
+  ownedConversations   Conversation[] @relation("ConversationOwner")
+  messages             Message[]
 }
 
 // 기관 인증 신청 (승인되면 User.role = ORG_ADMIN, institutionId 세팅)
@@ -114,6 +118,7 @@ model Item {
 
   images ItemImage[]
   embeddings      ImageEmbedding[]
+  conversations   Conversation[] //이 글에 대한 대화방
 
   @@index([institutionId])
   @@index([type, status])
@@ -178,4 +183,36 @@ model ImageEmbedding {
   updatedAt DateTime                    @default(now())
 
   @@index([itemId])
+}
+
+/// 대화방: 게시글 하나 + 문의한 사람 한 명당 1개
+model Conversation {
+  id                Int       @id @default(autoincrement())
+  itemId            Int
+  item              Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  starterId         Int // 문의한 사람
+  starter           User      @relation("ConversationStarter", fields: [starterId], references: [id], onDelete: Cascade)
+  ownerId           Int // 글쓴이
+  owner             User      @relation("ConversationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  starterLastReadAt DateTime  @default(now()) // 문의자가 마지막으로 읽은 시각
+  ownerLastReadAt   DateTime  @default(now()) // 글쓴이가 마지막으로 읽은 시각
+  lastMessageAt     DateTime  @default(now()) // 대화 목록 정렬용
+  createdAt         DateTime  @default(now())
+  messages          Message[]
+
+  @@unique([itemId, starterId])
+  @@index([starterId, lastMessageAt])
+  @@index([ownerId, lastMessageAt])
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       Int
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content        String       @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, id])
 }

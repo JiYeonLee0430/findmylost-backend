@@ -10,6 +10,7 @@ import { InternalModule } from './internal/internal.module';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PublicItemsModule } from './public-items/public-items.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { PublicItemsModule } from './public-items/public-items.module';
     ItemsModule,
     InternalModule,
     PublicItemsModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [

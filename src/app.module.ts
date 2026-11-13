@@ -11,6 +11,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PublicItemsModule } from './public-items/public-items.module';
 import { ChatModule } from './chat/chat.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ChatModule } from './chat/chat.module';
     InternalModule,
     PublicItemsModule,
     ChatModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [

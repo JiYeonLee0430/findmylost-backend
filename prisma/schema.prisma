@@ -213,6 +213,8 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
   content        String       @db.Text
   createdAt      DateTime     @default(now())
+  editedAt       DateTime? // 수정한 시각 (수정 안 했으면 비어 있음)
+  deletedAt      DateTime? // 삭제한 시각 (삭제하면 내용은 비움)
 
   @@index([conversationId, id])
 }

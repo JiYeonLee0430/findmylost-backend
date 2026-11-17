@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -46,7 +46,30 @@ export class ChatController {
   async send(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: SendMessageDto) {
     const { message, participantIds } = await this.chat.sendMessage(user, id, dto.content);
     this.gateway.emitNewMessage(participantIds, message);
-    return { ...message, isMine: true };
+    return { ...message, isMine: true, read: false, deleted: false, edited: false };
+  }
+
+  @Patch('conversations/:id/messages/:messageId')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({ summary: '메시지 수정 (내가 보낸 메시지만, 1~1000자). 두 참여자에게 실시간 message:updated 전송' })
+  edit(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body() dto: SendMessageDto,
+  ) {
+    return this.chat.editMessage(user, id, messageId, dto.content);
+  }
+
+  @Delete('conversations/:id/messages/:messageId')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({ summary: '메시지 삭제 (내가 보낸 메시지만, 내용은 비우고 기록은 남김). 두 참여자에게 실시간 message:deleted 전송' })
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+  ) {
+    return this.chat.deleteMessage(user, id, messageId);
   }
 
   @Post('conversations/:id/read')

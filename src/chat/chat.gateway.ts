@@ -58,10 +58,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (client.data?.expTimer) clearTimeout(client.data.expTimer);
   }
 
-  /** 새 메시지를 두 참여자에게 실시간 전송 (보낸 사람의 다른 탭에도 감) */
-  emitNewMessage(participantIds: number[], message: ChatMessagePayload) {
-    for (const uid of new Set(participantIds)) {
-      this.server.to(`user:${uid}`).emit('message:new', message);
+    /** 지정한 사용자들에게 실시간 이벤트 전송 (각자의 다른 탭에도 감) */
+  emitToUsers(userIds: number[], event: string, payload: unknown) {
+    for (const uid of new Set(userIds)) {
+      this.server.to(`user:${uid}`).emit(event, payload);
     }
+  }
+
+  /** 새 메시지를 두 참여자에게 실시간 전송 */
+  emitNewMessage(participantIds: number[], message: ChatMessagePayload) {
+    this.emitToUsers(participantIds, 'message:new', message);
   }
 }

@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ItemStatus, Prisma } from '@prisma/client';
+import { ItemStatus, Message, Prisma } from '@prisma/client';
+import { ChatGateway } from './chat.gateway';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { S3Service } from '../items/s3.service';
@@ -15,7 +16,7 @@ function maskName(name: string) {
 
 @Injectable()
 export class ChatService {
-  constructor(private prisma: PrismaService, private s3: S3Service) {}
+  constructor(private prisma: PrismaService, private s3: S3Service, private gateway: ChatGateway) {}
 
   /** 대화방 참여자인지 확인하고, 내가 문의자(starter)인지 글쓴이(owner)인지 돌려줌 */
   private async getMyConversation(user: AuthUser, conversationId: number) {
@@ -94,7 +95,7 @@ export class ChatService {
         },
         starter: { select: { name: true } },
         owner: { select: { name: true } },
-        messages: { orderBy: { id: 'desc' }, take: 1, select: { content: true, senderId: true, createdAt: true } },
+        messages: { orderBy: { id: 'desc' }, take: 1, select: { content: true, senderId: true, createdAt: true, deletedAt: true } },
       },
     });
     const unread = await this.unreadByConversation(user.id);
@@ -119,8 +120,12 @@ export class ChatService {
             thumbnailUrl: img ? await this.s3.createDownloadUrl(img.s3Key) : null,
           },
           lastMessage: last
-            ? { content: last.content.slice(0, 100), isMine: last.senderId === user.id, createdAt: last.createdAt }
-            : null,
+          ? {
+              content: last.deletedAt ? '삭제된 메시지입니다' : last.content.slice(0, 100),
+              isMine: last.senderId === user.id,
+              createdAt: last.createdAt,
+            }
+          : null,
           unreadCount: unread.get(c.id) ?? 0,
           lastMessageAt: c.lastMessageAt,
         };
@@ -128,15 +133,22 @@ export class ChatService {
     );
   }
 
-  /** 읽음 처리: 내가 마지막으로 읽은 시각을 지금으로 */
-  async markRead(user: AuthUser, conversationId: number) {
-    const { myRole } = await this.getMyConversation(user, conversationId);
-    await this.prisma.conversation.update({
-      where: { id: conversationId },
-      data: myRole === 'starter' ? { starterLastReadAt: new Date() } : { ownerLastReadAt: new Date() },
-    });
-    return { ok: true };
-  }
+    /** 읽음 처리: 내가 마지막으로 읽은 시각을 지금으로, 상대에게 실시간 알림 */
+    async markRead(user: AuthUser, conversationId: number) {
+      const { conv, myRole } = await this.getMyConversation(user, conversationId);
+      const readAt = new Date();
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: myRole === 'starter' ? { starterLastReadAt: readAt } : { ownerLastReadAt: readAt },
+      });
+      const otherId = myRole === 'starter' ? conv.ownerId : conv.starterId;
+      this.gateway.emitToUsers([otherId, user.id], 'conversation:read', {
+        conversationId,
+        readerId: user.id,
+        readAt,
+      });
+      return { ok: true };
+    }
 
   /** 메시지 불러오기: 기본은 최근 50개, after면 그 뒤 새 메시지, before면 그 앞 예전 메시지 */
   async getMessages(user: AuthUser, conversationId: number, q: { after?: number; before?: number }) {
@@ -161,17 +173,14 @@ export class ChatService {
 
     if (q.before === undefined) await this.markRead(user, conversationId); // 최신 메시지를 봤으면 읽음 처리
 
+    const otherReadAt = myRole === 'starter' ? conv.ownerLastReadAt : conv.starterLastReadAt;
     return {
       conversationId,
       itemId: conv.itemId,
       myRole,
-      messages: rows.map((m) => ({
-        id: m.id,
-        content: m.content,
-        isMine: m.senderId === user.id,
-        createdAt: m.createdAt,
-      })),
+      messages: rows.map((m) => this.toMessage(m, user.id, otherReadAt)),
     };
+    
   }
 
   /** 메시지 보내기: 저장 후, 실시간 전송에 필요한 참여자 정보까지 돌려줌 */
@@ -193,6 +202,64 @@ export class ChatService {
     return {
       message: { id: message.id, conversationId, senderId: user.id, content: message.content, createdAt: message.createdAt },
       participantIds: [conv.starterId, conv.ownerId],
+    };
+  }
+
+  /** 내가 보낸 메시지인지 확인 */
+  private async getMyMessage(user: AuthUser, conversationId: number, messageId: number) {
+    const { conv } = await this.getMyConversation(user, conversationId);
+    const m = await this.prisma.message.findFirst({ where: { id: messageId, conversationId } });
+    if (!m) throw new NotFoundException('메시지를 찾을 수 없습니다.');
+    if (m.senderId !== user.id) throw new ForbiddenException('내가 보낸 메시지만 수정하거나 삭제할 수 있습니다.');
+    return { conv, m };
+  }
+
+  /** 메시지 수정: 내용 변경 + 수정 시각 기록, 두 참여자에게 실시간 알림 */
+  async editMessage(user: AuthUser, conversationId: number, messageId: number, content: string) {
+    const { conv, m } = await this.getMyMessage(user, conversationId, messageId);
+    if (m.deletedAt) throw new BadRequestException('삭제된 메시지는 수정할 수 없습니다.');
+
+    const updated = await this.prisma.message.update({
+      where: { id: messageId },
+      data: { content, editedAt: new Date() },
+    });
+    const payload = {
+      id: updated.id,
+      conversationId,
+      senderId: updated.senderId,
+      content: updated.content,
+      edited: true,
+      editedAt: updated.editedAt,
+    };
+    this.gateway.emitToUsers([conv.starterId, conv.ownerId], 'message:updated', payload);
+    return payload;
+  }
+
+  /** 메시지 삭제: 기록은 남기고 내용은 비움, 두 참여자에게 실시간 알림 */
+  async deleteMessage(user: AuthUser, conversationId: number, messageId: number) {
+    const { conv, m } = await this.getMyMessage(user, conversationId, messageId);
+    const deletedAt = m.deletedAt ?? new Date();
+    if (!m.deletedAt) {
+      await this.prisma.message.update({ where: { id: messageId }, data: { content: '', deletedAt } });
+    }
+    const payload = { id: messageId, conversationId, deleted: true, deletedAt };
+    this.gateway.emitToUsers([conv.starterId, conv.ownerId], 'message:deleted', payload);
+    return payload;
+  }
+
+  /** 화면에 내려줄 메시지 모양. read는 내가 보낸 메시지에만: 상대가 읽었는지 */
+  private toMessage(m: Message, userId: number, otherReadAt: Date) {
+    const isMine = m.senderId === userId;
+    return {
+      id: m.id,
+      senderId: m.senderId,
+      content: m.deletedAt ? null : m.content,
+      isMine,
+      deleted: !!m.deletedAt,
+      edited: !!m.editedAt && !m.deletedAt,
+      ...(isMine && { read: m.createdAt <= otherReadAt }),
+      createdAt: m.createdAt,
+      editedAt: m.editedAt,
     };
   }
 }

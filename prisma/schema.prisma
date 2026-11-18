@@ -68,6 +68,8 @@ model User {
   startedConversations Conversation[] @relation("ConversationStarter")
   ownedConversations   Conversation[] @relation("ConversationOwner")
   messages             Message[]
+
+  itemNotes            ItemNote[] // 내가 쓴 메모
 }
 
 // 기관 인증 신청 (승인되면 User.role = ORG_ADMIN, institutionId 세팅)
@@ -119,6 +121,7 @@ model Item {
   images ItemImage[]
   embeddings      ImageEmbedding[]
   conversations   Conversation[] //이 글에 대한 대화방
+  notes           ItemNote[]     // 이 글에 달린 메모
 
   @@index([institutionId])
   @@index([type, status])
@@ -217,4 +220,25 @@ model Message {
   deletedAt      DateTime? // 삭제한 시각 (삭제하면 내용은 비움)
 
   @@index([conversationId, id])
+}
+
+/// 메모 공개 범위
+enum NoteScope {
+  PRIVATE // 작성자만
+  INSTITUTION // 그 글의 기관 관리자만 (기관이 등록한 글에만)
+}
+
+/// 게시글 메모: 개인 메모와 기관 관리 메모를 scope로 구분
+model ItemNote {
+  id        Int       @id @default(autoincrement())
+  itemId    Int
+  item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  authorId  Int
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  scope     NoteScope
+  content   String    @db.Text
+  createdAt DateTime  @default(now())
+
+  @@index([itemId, scope])
+  @@index([authorId])
 }

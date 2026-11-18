@@ -12,6 +12,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PublicItemsModule } from './public-items/public-items.module';
 import { ChatModule } from './chat/chat.module';
 import { UsersModule } from './users/users.module';
+import { NotesModule } from './notes/notes.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { UsersModule } from './users/users.module';
     PublicItemsModule,
     ChatModule,
     UsersModule,
+    NotesModule,
   ],
   controllers: [AppController],
   providers: [

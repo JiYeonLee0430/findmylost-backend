@@ -22,6 +22,7 @@ export interface CreateItemInput {
   storageLocation?: string;
   lostLocation?: string;
   content?: string;  
+  region?: string;
 }
 
 export interface UpdateItemInput {
@@ -32,6 +33,7 @@ export interface UpdateItemInput {
   storageLocation?: string | null;
   lostLocation?: string | null;
   content?: string | null;
+  region?: string | null;
 }
 
 @Injectable()
@@ -73,6 +75,7 @@ export class ItemsService {
       ...(q.category && { category: q.category }),
       ...(q.institutionId && { institutionId: q.institutionId }),
       ...(q.keyword && { title: { contains: q.keyword, mode: 'insensitive' } }),
+      ...(q.region && { region: q.region }),
     };
 
     const [total, rows] = await this.prisma.$transaction([
@@ -93,6 +96,7 @@ export class ItemsService {
           storageLocation: true,
           createdAt: true,
           lostLocation: true,
+          region: true,
           institution: { select: { id: true, name: true } },
           images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
         },
@@ -397,6 +401,7 @@ export class ItemsService {
         authorId: true,
         content: true,
         lostLocation: true,
+        region: true,
         author: { select: { name: true } },
         institution: { select: { id: true, name: true } },
         images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: { id: true, s3Key: true } },
@@ -452,7 +457,8 @@ export class ItemsService {
         locationLat: input.locationLat,
         locationLng: input.locationLng,
         storageLocation: input.storageLocation,
-        lostLocation: input.lostLocation,
+        lostLocation: input.lostLocation, 
+        region: input.region,
         content: input.content,
       },
       select: {
@@ -467,6 +473,7 @@ export class ItemsService {
         createdAt: true,
         lostLocation: true,
         content: true,
+        region: true,
       },
     });
   }

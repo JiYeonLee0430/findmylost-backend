@@ -105,6 +105,7 @@ model Item {
   locationLng     Float
   storageLocation String? // 습득물: 보관 장소
   lostLocation    String? // 분실물: 분실 장소 (글로 적는 장소)
+  region          String?   // 시/도 짧은 이름 (예: 충남). 공공 습득물 지역과 같은 기준
   content         String? @db.Text // 게시글 본문 설명
   
   // Lambda가 POST /internal/items/:id/embedding 으로 채움
@@ -125,6 +126,7 @@ model Item {
 
   @@index([institutionId])
   @@index([type, status])
+  @@index([region])
 }
 
 model ItemImage {

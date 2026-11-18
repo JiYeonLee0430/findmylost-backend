@@ -18,6 +18,7 @@ interface Card {
   thumbnailUrl: string | null;
   sortAt: number;
   s3Key?: string;
+  region: string | null;
 }
 
 @Injectable()
@@ -36,6 +37,7 @@ export class FeedService {
       status: ItemStatus.OPEN,
       ...(q.category && { category: q.category }),
       ...(q.keyword && { title: { contains: q.keyword, mode: 'insensitive' } }),
+      ...(q.region && { region: q.region }),
     };
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const publicWhere: Prisma.PublicItemWhereInput = {
@@ -43,6 +45,7 @@ export class FeedService {
         { foundDate: { gte: since } },
         ...(q.keyword ? [{ name: { contains: q.keyword, mode: 'insensitive' as const } }] : []),
         ...(q.category ? [publicCategoryWhere(q.category)] : []),
+        ...(q.region ? [{ region: q.region }] : []), // ★ 공공 습득물도 지역으로 거름
       ],
     };
 
@@ -56,6 +59,7 @@ export class FeedService {
           take,
           select: {
             id: true, title: true, category: true, createdAt: true, storageLocation: true,
+            region: true, // ★
             institution: { select: { name: true } },
             images: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], take: 1, select: { s3Key: true } },
           },
@@ -72,6 +76,7 @@ export class FeedService {
           place: user ? r.storageLocation : null, // 비로그인은 가림
           institution: r.institution?.name ?? null,
           thumbnailUrl: null,
+          region: r.region, // ★
           sortAt: r.createdAt.getTime(),
           s3Key: r.images[0]?.s3Key,
         })),
@@ -86,7 +91,10 @@ export class FeedService {
           where: publicWhere,
           orderBy: [{ foundDate: 'desc' }, { id: 'desc' }],
           take,
-          select: { id: true, name: true, category: true, foundDate: true, storagePlace: true, imageUrl: true },
+          select: {
+            id: true, name: true, category: true, foundDate: true, storagePlace: true, imageUrl: true,
+            region: true, // ★
+          },
         }),
       ]);
       return [
@@ -100,6 +108,7 @@ export class FeedService {
           place: r.storagePlace,
           institution: null,
           thumbnailUrl: r.imageUrl,
+          region: r.region, // ★
           sortAt: r.foundDate?.getTime() ?? 0,
         })),
       ];

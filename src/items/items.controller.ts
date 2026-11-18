@@ -17,6 +17,9 @@ import type { UploadedImage } from './items-image-search.dto';
 import { Roles } from '../common/roles.decorator';
 import { ManageItemsQueryDto } from './items-mine-query.dto';
 import { Throttle } from '@nestjs/throttler';
+import { IsIn } from 'class-validator';
+import { REGIONS, toShortRegion } from '../common/region.util';
+import { Transform } from 'class-transformer';
 
 class CreateItemDto {
   @ApiProperty({ example: '검정 지갑', description: '게시글 제목' })
@@ -42,6 +45,10 @@ class CreateItemDto {
 
   @ApiPropertyOptional({ example: '도서관 2층 열람실', description: '분실 장소 (분실물만 입력 가능)' })
   @IsOptional() @IsString() @MaxLength(200) lostLocation?: string;
+
+  @ApiPropertyOptional({ example: '충남', description: '시/도 (지도 핀 좌표로 구한 짧은 이름). 긴 이름(충청남도)도 받음' })
+  @IsOptional() @Transform(({ value }) => toShortRegion(value)) @IsIn(REGIONS)
+  region?: string;
 }
 
 class UploadUrlDto {
@@ -88,6 +95,10 @@ class UpdateItemDto {
 
   @ApiPropertyOptional({ type: String, nullable: true, example: '도서관 2층 열람실', description: '분실 장소 (분실물만, null이면 삭제)' })
   @IsOptional() @IsString() @MaxLength(200) lostLocation?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, example: '충남', description: '시/도 (null이면 삭제)' })
+  @IsOptional() @Transform(({ value }) => toShortRegion(value)) @IsIn(REGIONS)
+  region?: string | null;
 }
 
 @ApiTags('Items (게시글)')

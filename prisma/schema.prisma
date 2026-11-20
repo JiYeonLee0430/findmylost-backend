@@ -169,6 +169,7 @@ model PublicItem {
   raw             Json // 원본 응답 전체. API 응답으로는 내려보내지 않음
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+  notes           ItemNote[]
 
   @@unique([atcId, fdSn])
   @@index([foundDate])
@@ -230,17 +231,19 @@ enum NoteScope {
   INSTITUTION // 그 글의 기관 관리자만 (기관이 등록한 글에만)
 }
 
-/// 게시글 메모: 개인 메모와 기관 관리 메모를 scope로 구분
 model ItemNote {
-  id        Int       @id @default(autoincrement())
-  itemId    Int
-  item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  authorId  Int
-  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  scope     NoteScope
-  content   String    @db.Text
-  createdAt DateTime  @default(now())
+  id           Int         @id @default(autoincrement())
+  itemId       Int?        // 우리 글 메모 (publicItemId와 둘 중 하나만)
+  item         Item?       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  publicItemId Int?        // 경찰청 습득물 메모 (개인 메모만)
+  publicItem   PublicItem? @relation(fields: [publicItemId], references: [id], onDelete: Cascade)
+  authorId     Int
+  author       User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  scope        NoteScope
+  content      String      @db.Text
+  createdAt    DateTime    @default(now())
 
   @@index([itemId, scope])
+  @@index([publicItemId, authorId])
   @@index([authorId])
 }

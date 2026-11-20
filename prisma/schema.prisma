@@ -170,11 +170,13 @@ model PublicItem {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   notes           ItemNote[]
+  lastSyncedAt    DateTime  @default(now())   // Lambda 수집에 마지막으로 잡힌 시각 (bulk 저장마다 갱신)
 
   @@unique([atcId, fdSn])
   @@index([foundDate])
   @@index([category])
   @@index([region])
+  @@index([lastSyncedAt])
 }
 
 /// 사진(s3Key)마다 벡터 1개. Lambda가 사진 등록보다 먼저 보내도 저장되도록 ItemImage와 분리

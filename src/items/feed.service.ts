@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { publicCategoryWhere } from '../public-items/public-category';
 import { S3Service } from './s3.service';
 import { FeedQueryDto } from './feed-query.dto';
+import { publicFreshWhere } from '../public-items/public-fresh.util';
 
 interface Card {
   source: 'internal' | 'public';
@@ -42,6 +43,7 @@ export class FeedService {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const publicWhere: Prisma.PublicItemWhereInput = {
       AND: [
+        publicFreshWhere(),
         { foundDate: { gte: since } },
         ...(q.keyword ? [{ name: { contains: q.keyword, mode: 'insensitive' as const } }] : []),
         ...(q.category ? [publicCategoryWhere(q.category)] : []),

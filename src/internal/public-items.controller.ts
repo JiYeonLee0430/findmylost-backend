@@ -28,12 +28,14 @@ export class PublicItemsInternalController {
   @Post('bulk')
   @HttpCode(200)
   async bulkUpsert(@Body() dto: BulkPublicItemsDto) {
+    const syncedAt = new Date(); // 이번 수집에 잡힌 시각
     const ops = dto.items.map(({ foundDate, raw, imageUrl, ...i }) => {
       const data = {
         ...i,
         imageUrl: cleanImageUrl(imageUrl),
         foundDate: parseYmd(foundDate),
         raw: (raw ?? {}) as Prisma.InputJsonObject,
+        lastSyncedAt: syncedAt,
       };
       return this.prisma.publicItem.upsert({
         where: { atcId_fdSn: { atcId: i.atcId, fdSn: i.fdSn } },

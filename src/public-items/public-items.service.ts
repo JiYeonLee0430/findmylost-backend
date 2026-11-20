@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { maskNames } from '../common/mask-name.util';
 import { ListPublicItemsQueryDto } from './public-items-query.dto';
 import { publicCategoryWhere } from './public-category';
+import { isListed, publicFreshWhere } from './public-fresh.util';
 
 const LIST_SELECT = {
   id: true, name: true, category: true, foundDate: true,
@@ -38,6 +39,7 @@ export class PublicItemsService {
 
     const where: Prisma.PublicItemWhereInput = {
       AND: [
+        publicFreshWhere(),
         { foundDate: { gte: from, ...(q.to && { lte: new Date(q.to) }) } },
         ...(q.region ? [{ region: q.region }] : []),
         ...(q.keyword ? [{ name: { contains: q.keyword, mode: 'insensitive' as const } }] : []),
@@ -73,16 +75,17 @@ export class PublicItemsService {
   async detail(id: number) {
     const r = await this.prisma.publicItem.findUnique({
       where: { id },
-      select: { ...LIST_SELECT, atcId: true, content: true, institutionName: true, phone: true },
+      select: { ...LIST_SELECT, atcId: true, content: true, institutionName: true, phone: true, lastSyncedAt: true },
     });
     if (!r) throw new NotFoundException('공공 습득물을 찾을 수 없습니다.');
-    const { atcId, content, institutionName, phone, ...rest } = r;
+    const { atcId, content, institutionName, phone, lastSyncedAt, ...rest } = r;
     return {
       ...this.toListItem(rest),
       atcId,
       content: maskNames(content),
       institutionName,
       phone,
+      listed: isListed(lastSyncedAt), // false면 "경찰청 목록에서 내려간 물건(이미 찾아갔을 수 있음)"
     };
   }
 }

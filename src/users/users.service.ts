@@ -69,7 +69,7 @@ export class UsersService {
   async withdraw(userId: number, password: string) {
     const u = await this.checkPassword(userId, password);
     if (u.role !== Role.USER) {
-      throw new BadRequestException('기관 관리자와 운영자 계정은 운영자에게 탈퇴를 요청해 주세요.');
+      throw new BadRequestException('기관 관리자 계정은 운영자에게 권한 해제를 요청한 뒤 탈퇴할 수 있습니다.');
     }
 
     // S3에서 지울 사진 목록을 먼저 확보 (DB에서 지우면 경로를 알 수 없음)

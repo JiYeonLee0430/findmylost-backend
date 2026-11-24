@@ -91,4 +91,49 @@ export class InstitutionsService {
     });
     return { ok: true };
   }
+
+    /** [운영자] 기관 관리자 목록 (권한 회수 시 넘겨받을 사람 고르기용) */
+    async listOrgAdmins() {
+      const admins = await this.prisma.user.findMany({
+        where: { role: Role.ORG_ADMIN },
+        orderBy: [{ institutionId: 'asc' }, { id: 'asc' }],
+        select: { id: true, name: true, email: true, institution: { select: { id: true, name: true } } },
+      });
+      return { items: admins };
+    }
+  
+    /**
+     * [운영자] 기관 관리자 권한 회수.
+     * 그 사람이 등록한 학교 습득물과 그 글의 대화방(글쓴이 쪽)을 같은 기관의 다른 관리자에게 넘기고,
+     * 일반 회원으로 되돌린다. 이후 본인이 탈퇴해도 학교 기록과 학생과의 대화는 남는다.
+     */
+    async revokeOrgAdmin(targetId: number, transferToId: number, actorId: number) {
+      if (targetId === actorId) throw new BadRequestException('본인 계정은 회수할 수 없습니다.');
+      if (targetId === transferToId) throw new BadRequestException('넘겨받을 관리자는 다른 사람이어야 합니다.');
+  
+      const target = await this.prisma.user.findUnique({ where: { id: targetId } });
+      if (!target || target.role !== Role.ORG_ADMIN || target.institutionId == null) {
+        throw new BadRequestException('기관 관리자 계정이 아닙니다.');
+      }
+      const to = await this.prisma.user.findUnique({ where: { id: transferToId } });
+      if (!to || to.role !== Role.ORG_ADMIN || to.institutionId !== target.institutionId) {
+        throw new BadRequestException('넘겨받을 사람은 같은 기관의 관리자여야 합니다.');
+      }
+  
+      const items = await this.prisma.item.findMany({
+        where: { authorId: targetId, institutionId: target.institutionId },
+        select: { id: true },
+      });
+      const itemIds = items.map((i) => i.id);
+  
+      await this.prisma.$transaction([
+        this.prisma.item.updateMany({ where: { id: { in: itemIds } }, data: { authorId: transferToId } }),
+        this.prisma.conversation.updateMany({
+          where: { itemId: { in: itemIds }, ownerId: targetId },
+          data: { ownerId: transferToId },
+        }),
+        this.prisma.user.update({ where: { id: targetId }, data: { role: Role.USER, institutionId: null } }),
+      ]);
+      return { ok: true, transferredItems: itemIds.length };
+    }
 }

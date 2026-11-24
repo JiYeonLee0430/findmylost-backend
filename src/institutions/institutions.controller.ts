@@ -16,6 +16,10 @@ class RequestVerificationDto {
   @ApiPropertyOptional({ example: '재직증명서 확인 가능, 학생처 담당', description: '재직 증빙 설명' })
   @IsOptional() @IsString() evidence?: string;
 }
+class RevokeOrgDto {
+  @ApiProperty({ example: 5, description: '학교 습득물과 대화를 넘겨받을 같은 기관의 다른 관리자 ID' })
+  @IsInt() transferToUserId: number;
+}
 
 @ApiTags('Institutions (기관 인증)')
 @ApiBearerAuth()
@@ -78,5 +82,28 @@ export class InstitutionsController {
   @ApiResponse({ status: 400, description: '이미 처리되었거나 존재하지 않는 신청' })
   reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return this.service.reject(id, user.id);
+  }
+
+  @Roles(Role.SUPER_ADMIN)
+  @Get('admin/org-admins')
+  @ApiOperation({
+    summary: '[운영자] 기관 관리자 목록',
+    description: '권한 회수 시 넘겨받을 관리자를 고르기 위한 목록입니다. 운영자(SUPER_ADMIN) 전용, MFA 필요.',
+  })
+  listOrgAdmins() {
+    return this.service.listOrgAdmins();
+  }
+
+  @Roles(Role.SUPER_ADMIN)
+  @Patch('admin/users/:id/revoke-org')
+  @ApiOperation({
+    summary: '[운영자] 기관 관리자 권한 회수',
+    description:
+      '대상 관리자가 등록한 학교 습득물과 그 글의 대화방을 같은 기관의 다른 관리자에게 넘기고, 대상을 일반 회원으로 되돌립니다. 이후 대상은 직접 탈퇴할 수 있습니다.',
+  })
+  @ApiResponse({ status: 400, description: '대상이 기관 관리자가 아니거나, 넘겨받을 사람이 같은 기관 관리자가 아님' })
+  @ApiResponse({ status: 403, description: '운영자가 아니거나 MFA 인증이 필요함' })
+  revokeOrg(@Param('id', ParseIntPipe) id: number, @Body() dto: RevokeOrgDto, @CurrentUser() user: AuthUser) {
+    return this.service.revokeOrgAdmin(id, dto.transferToUserId, user.id);
   }
 }

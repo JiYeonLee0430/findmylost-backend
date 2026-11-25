@@ -15,6 +15,28 @@ import { maskNames } from '../common/mask-name.util';
 
 const MAX_IMAGES = 5;
 
+type PublicHitRow = {
+  id: number; name: string; category: string | null; foundDate: Date | null;
+  storagePlace: string | null; imageUrl: string | null; region: string | null; similarity: number;
+};
+
+/** 경찰청 습득물 유사도 결과를 공공 습득물 목록과 같은 모양으로 (similarity 포함) */
+function toPublicHit(r: PublicHitRow) {
+  const [main, sub] = (r.category ?? '').split(' > ');
+  return {
+    id: r.id,
+    source: 'public' as const,
+    name: maskNames(r.name),
+    categoryMain: main || null,
+    categorySub: sub || null,
+    foundDate: r.foundDate ? r.foundDate.toISOString().slice(0, 10) : null,
+    storagePlace: r.storagePlace,
+    imageUrl: r.imageUrl,
+    region: r.region,
+    similarity: Math.round(r.similarity * 1000) / 1000,
+  };
+}
+
 export interface CreateItemInput {
   title: string;
   type: ItemType;
@@ -237,7 +259,49 @@ export class ItemsService {
       LIMIT ${limit}
     `;
 
-    return { ready: true, items: await this.hydrateHits(user, hits) };
+    const items: Record<string, unknown>[] = await this.hydrateHits(user, hits);
+
+    // 분실물 글이면 경찰청 습득물 사진도 함께 비교 (유사도 순으로 섞음)
+    if (src.type === ItemType.LOST) {
+      items.push(...(await this.similarPublic(itemId, limit, q.minSimilarity)));
+      items.sort((a, b) => (b.similarity as number) - (a.similarity as number));
+    }
+
+    return { ready: true, items: items.slice(0, limit) };
+  }
+
+  /** 이 게시글 사진들과 경찰청 습득물 사진 벡터를 비교 (사진 쌍 중 최댓값) */
+  private async similarPublic(itemId: number, limit: number, minSimilarity?: number) {
+    const cutoff = publicFreshCutoff();
+    const freshFilter = cutoff ? Prisma.sql`AND p."lastSyncedAt" >= ${cutoff}` : Prisma.empty;
+    const minFilter =
+      minSimilarity !== undefined
+        ? Prisma.sql`HAVING MAX(1 - (e.vector <=> se.vector)) >= ${minSimilarity}`
+        : Prisma.empty;
+    try {
+      const rows = await this.prisma.$queryRaw<PublicHitRow[]>`
+        WITH se AS (
+          SELECT e.vector
+          FROM "ImageEmbedding" e
+          JOIN "ItemImage" i ON i."s3Key" = e."s3Key"
+          WHERE i."itemId" = ${itemId}
+        )
+        SELECT p.id, p.name, p.category, p."foundDate", p."storagePlace", p."imageUrl", p.region,
+               MAX(1 - (e.vector <=> se.vector))::float8 AS similarity
+        FROM "PublicItemEmbedding" e
+        JOIN "PublicItem" p ON p.id = e."publicItemId"
+        CROSS JOIN se
+        WHERE e.vector IS NOT NULL ${freshFilter}
+        GROUP BY p.id
+        ${minFilter}
+        ORDER BY similarity DESC
+        LIMIT ${limit}
+      `;
+      return rows.map(toPublicHit);
+    } catch (e) {
+      new Logger('ItemsService').error(`공공 습득물 추천 실패: ${e instanceof Error ? e.message : e}`);
+      return [];
+    }
   }
 
     /** 사진으로 검색: 업로드한 사진의 임베딩과 게시글들의 임베딩을 코사인 거리로 비교 */
@@ -294,9 +358,7 @@ export class ItemsService {
           ? Prisma.sql`AND 1 - (e.vector <=> ${vec}::vector) >= ${minSimilarity}`
           : Prisma.empty;
       try {
-        const rows = await this.prisma.$queryRaw<
-          { id: number; name: string; category: string | null; foundDate: Date | null; storagePlace: string | null; imageUrl: string | null; region: string | null; similarity: number }[]
-        >`
+        const rows = await this.prisma.$queryRaw<PublicHitRow[]>`
           SELECT p.id, p.name, p.category, p."foundDate", p."storagePlace", p."imageUrl", p.region,
                  (1 - (e.vector <=> ${vec}::vector))::float8 AS similarity
           FROM "PublicItemEmbedding" e
@@ -305,21 +367,7 @@ export class ItemsService {
           ORDER BY e.vector <=> ${vec}::vector
           LIMIT ${limit}
         `;
-        return rows.map((r) => {
-          const [main, sub] = (r.category ?? '').split(' > ');
-          return {
-            id: r.id,
-            source: 'public' as const,
-            name: maskNames(r.name),
-            categoryMain: main || null,
-            categorySub: sub || null,
-            foundDate: r.foundDate ? r.foundDate.toISOString().slice(0, 10) : null,
-            storagePlace: r.storagePlace,
-            imageUrl: r.imageUrl,
-            region: r.region,
-            similarity: Math.round(r.similarity * 1000) / 1000,
-          };
-        });
+        return rows.map(toPublicHit);
       } catch (e) {
         // 벡터 테이블이 아직 없거나 오류가 나도 기존 게시글 검색 결과는 그대로 보여줌
         new Logger('ItemsService').error(`공공 습득물 사진 검색 실패: ${e instanceof Error ? e.message : e}`);

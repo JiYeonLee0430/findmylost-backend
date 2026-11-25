@@ -42,6 +42,10 @@ class PublicEmbeddingsBodyDto {
 class EmbeddingTargetsQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200)
   limit?: number;
+
+  /** 1이면 실패(failed)로 기록된 것만 다시 가져옴 (사진 줄이기 추가 후 재시도용) */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(1)
+  retryFailed?: number;
 }
 
 /** "이미지 없음" 그림 주소(no_img)는 사진 없음으로 처리 */
@@ -77,11 +81,14 @@ export class PublicItemsInternalController implements OnModuleInit {
   @Get('embedding-targets')
   async embeddingTargets(@Query() q: EmbeddingTargetsQueryDto) {
     const limit = q.limit ?? 100;
+    const cond = q.retryFailed
+      ? Prisma.sql`e.status = 'failed'`
+      : Prisma.sql`e."publicItemId" IS NULL`;
     const rows = await this.prisma.$queryRaw<{ id: number; imageUrl: string }[]>`
       SELECT p.id, p."imageUrl"
       FROM "PublicItem" p
       LEFT JOIN "PublicItemEmbedding" e ON e."publicItemId" = p.id
-      WHERE p."imageUrl" IS NOT NULL AND e."publicItemId" IS NULL
+      WHERE p."imageUrl" IS NOT NULL AND ${cond}
       ORDER BY p."foundDate" DESC NULLS LAST, p.id DESC
       LIMIT ${limit}
     `;

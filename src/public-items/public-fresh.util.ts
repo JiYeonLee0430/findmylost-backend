@@ -19,3 +19,8 @@ export function isListed(lastSyncedAt: Date): boolean {
   const d = staleDays();
   return !d || lastSyncedAt >= cutoff(d);
 }
+/** raw SQL용: 이 시각보다 오래 수집 안 된 공공 습득물은 숨김. 꺼져 있으면 null */
+export function publicFreshCutoff(): Date | null {
+  const d = staleDays();
+  return d ? cutoff(d) : null;
+}

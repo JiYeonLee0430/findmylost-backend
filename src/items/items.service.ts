@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ItemStatus, ItemType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
@@ -10,6 +10,8 @@ import { BedrockService } from './bedrock.service';
 import { SearchByImageDto } from './items-image-search.dto';
 import type { UploadedImage } from './items-image-search.dto';
 import { ManageItemsQueryDto } from './items-mine-query.dto';
+import { publicFreshCutoff } from '../public-items/public-fresh.util';
+import { maskNames } from '../common/mask-name.util';
 
 const MAX_IMAGES = 5;
 
@@ -271,7 +273,58 @@ export class ItemsService {
         LIMIT ${limit}
       `;
   
-      return { items: await this.hydrateHits(user, hits) };
+      const items: Record<string, unknown>[] = await this.hydrateHits(user, hits);
+  
+      // 습득물/전체 검색이면 경찰청 습득물 사진도 함께 비교 (벡터가 있는 것만)
+      if (target !== 'LOST') {
+        const publicItems = await this.searchPublicByVector(vec, limit, q.minSimilarity);
+        items.push(...publicItems);
+        items.sort((a, b) => (b.similarity as number) - (a.similarity as number));
+      }
+  
+      return { items: items.slice(0, limit) };
+    }
+  
+    /** 경찰청 습득물 사진 벡터와 비교. 결과 모양은 공공 습득물 목록과 같고 similarity가 붙음 */
+    private async searchPublicByVector(vec: string, limit: number, minSimilarity?: number) {
+      const cutoff = publicFreshCutoff();
+      const freshFilter = cutoff ? Prisma.sql`AND p."lastSyncedAt" >= ${cutoff}` : Prisma.empty;
+      const minFilter =
+        minSimilarity !== undefined
+          ? Prisma.sql`AND 1 - (e.vector <=> ${vec}::vector) >= ${minSimilarity}`
+          : Prisma.empty;
+      try {
+        const rows = await this.prisma.$queryRaw<
+          { id: number; name: string; category: string | null; foundDate: Date | null; storagePlace: string | null; imageUrl: string | null; region: string | null; similarity: number }[]
+        >`
+          SELECT p.id, p.name, p.category, p."foundDate", p."storagePlace", p."imageUrl", p.region,
+                 (1 - (e.vector <=> ${vec}::vector))::float8 AS similarity
+          FROM "PublicItemEmbedding" e
+          JOIN "PublicItem" p ON p.id = e."publicItemId"
+          WHERE e.vector IS NOT NULL ${freshFilter} ${minFilter}
+          ORDER BY e.vector <=> ${vec}::vector
+          LIMIT ${limit}
+        `;
+        return rows.map((r) => {
+          const [main, sub] = (r.category ?? '').split(' > ');
+          return {
+            id: r.id,
+            source: 'public' as const,
+            name: maskNames(r.name),
+            categoryMain: main || null,
+            categorySub: sub || null,
+            foundDate: r.foundDate ? r.foundDate.toISOString().slice(0, 10) : null,
+            storagePlace: r.storagePlace,
+            imageUrl: r.imageUrl,
+            region: r.region,
+            similarity: Math.round(r.similarity * 1000) / 1000,
+          };
+        });
+      } catch (e) {
+        // 벡터 테이블이 아직 없거나 오류가 나도 기존 게시글 검색 결과는 그대로 보여줌
+        new Logger('ItemsService').error(`공공 습득물 사진 검색 실패: ${e instanceof Error ? e.message : e}`);
+        return [];
+      }
     }
   
     /** 유사도 결과(id, similarity)에 게시글 정보와 썸네일을 붙임 (유사도 순서 유지) */
